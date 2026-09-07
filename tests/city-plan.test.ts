@@ -73,7 +73,7 @@ describe('planCity', () => {
     expect(plan.wires.length % 12).toBe(0); // three segments per wire, two endpoints each
     expect(plan.lanterns.length / 3).toBeGreaterThan(400);
     expect(plan.vents.length).toBeGreaterThan(20);
-    expect(plan.holos.length).toBe(12);
+    expect(plan.holos.length).toBe(14); // (twelve, and a ring of glyphs over each of the avenue's gates)
     expect(plan.stalls.length).toBeGreaterThan(80); // the night market and three flea markets
     expect(plan.stacks.length).toBeGreaterThanOrEqual(2);
     expect(plan.bridges.length).toBe(21); // twenty east–west roads' and the arterial's skewed one (the arterial took two crossings)
@@ -448,6 +448,19 @@ describe('The viaduct over its arterial (owner: roads that exist in real life)',
       const lat = Math.abs(arterialLat(p.x, p.z));
       expect(lat).toBeGreaterThan(ARTERIAL.w / 2 + 2.2);
       expect(lat).toBeLessThan(ARTERIAL_ROW - ARTERIAL.walk);
+    }
+  });
+
+  it('straddles the avenue with two gates: towers either side, a bridge building over the roads and the median, the avenue open beneath and above', () => {
+    expect(plan.gates.length).toBe(2);
+    for (const g of plan.gates) {
+      expect(g.top).toBeGreaterThan(60);
+      expect(g.deck - g.under).toBeGreaterThanOrEqual(8);
+      for (const z of [-19, 0, 19]) { // the roads and the median pass beneath, a bus high and more
+        expect(plan.grid.hit(g.x, 8, z, 1), `under the gate at x=${g.x}, z=${z}`).toBeNull();
+        expect(plan.grid.hit(g.x, g.under + 2, z, 0.5), 'the bridge building is really there').not.toBeNull();
+      }
+      expect(plan.grid.hit(g.x, 36, 0, 2.6), 'the flyovers pass over it').toBeNull();
     }
   });
 

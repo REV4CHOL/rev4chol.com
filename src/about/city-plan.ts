@@ -219,6 +219,9 @@ export interface Plan {
   perches: { x: number; y: number; z: number; yaw: number }[];
   /** The festival stages on the boulevard's median: a crowd gathers before each. */
   stages: { x: number; z: number; w: number; d: number }[];
+  /** The gate complexes straddling the tree-lined avenue: their centre on the avenue's axis, the bridge building's
+   *  underside and top, the towers' top. */
+  gates: { x: number; under: number; deck: number; top: number }[];
   leds: Strip[];
   awnings: Strip[];
   /** Tarpaulins over the shacks and the stalls, the washing on the balconies — lit dim, in their own colours. */
@@ -468,6 +471,8 @@ export function planCity(seed: number): Plan {
   const poles: Plan['poles'] = [];
   const superblocks: Plan['superblocks'] = [];
   const stages: Plan['stages'] = [];
+  const gates: Plan['gates'] = [];
+  const extraBeacons: { x: number; y: number; z: number }[] = []; // (the gates', the canal's: joined to the beacons below)
   const subways: { x: number; z: number; rotY: number }[] = [];
   const piers: { x: number; z: number }[] = [];
   const stacks: { x: number; z: number; top: number }[] = [];
@@ -1425,6 +1430,7 @@ export function planCity(seed: number): Plan {
   reserved.set(key(LANDMARK_BLOCK.bx, LANDMARK_BLOCK.bz), 'landmark');
   for (const [bx, bz] of [[-6, -5], [6, 6], [2, -7]]) reserved.set(key(bx, bz), 'flea'); // the flea markets
   for (const [bx, bz] of [[-7, 6], [7, -2], [-4, 7], [6, -6]]) reserved.set(key(bx, bz), 'favela'); // the poor quarters
+  for (const bx of [-4, 4]) for (const bz of [-1, 1]) reserved.set(key(bx, bz), 'gate'); // the gates' towers, either side of the avenue
   // closed street segments: a north–south street line i closed alongside
   // block row j (closedZ), an east–west line i closed alongside column j (closedX)
   const closedZ = new Set<string>();
@@ -1722,6 +1728,55 @@ export function planCity(seed: number): Plan {
   };
   pois.push({ x: lmx, y: landmark.top * 0.62, z: lmz, w: 3 });
   for (const [bx, bz] of [[-3, -6], [5, 2], [-6, -2]]) temple(bx * G, bz * G);
+  // -- THE GATES ON THE AVENUE (owner: the massive boulevard across the city was flat, unlit, generic, too long — "cut it
+  // up and build unique massive buildings"): two gate complexes straddle the tree-lined avenue at x = ±152, a tower on
+  // each flanking lot and a BRIDGE BUILDING over the whole avenue between them at 15–29 (the roads and the median pass
+  // under it in lit portals; the flyovers at 36 pass over it), giant screens on its faces looking down the avenue, LED
+  // edges, lantern strings under it, a crown of light on the towers, beacons. The west gate is a pair of stepped
+  // ziggurats; the east a pair of drums with a ring.
+  const avenueGate = (gx: number, variant: number) => {
+    const under = 15, deckTop = Math.min(29, allowedTop(gx, 0, 26, 100) - 0.6);
+    let top = 0;
+    for (const s of [-1, 1]) { // the towers on the flanking lots (z = ±38, 24 square)
+      const tz = s * G, allowed = allowedTop(gx, tz, 24, 24);
+      if (variant === 0) { // stepped ziggurats: three tiers and a spire
+        let y = 0;
+        for (const [w, h] of [[24, 44], [18, 36], [12, 28]] as [number, number][]) {
+          if (y + h > allowed - 1) break;
+          solid(core, 'facade', 'mega', MEGA_TEX, gx, y + h / 2, tz, w, h, w);
+          for (const [a, b] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) leds.push({ x: gx + a * (w / 2 + 0.1), y: y + h / 2, z: tz + b * (w / 2 + 0.1), w: 0.22, h: h - 1, d: 0.22, color: s > 0 ? '#5df2ff' : '#ff4fd8' });
+          y += h;
+        }
+        if (y + 16 <= allowed) { solid(core, 'spire', 'mega', 0, gx, y + 8, tz, 1.4, 16, 1.4); y += 16; }
+        top = Math.max(top, y);
+      } else { // drums with a ring
+        const h = Math.min(104, allowed - 8);
+        if (h > 20) {
+          solid(core, 'cyl', 'mega', MEGA_TEX, gx, h / 2, tz, 22, h, 22);
+          solid(core, 'cyl', 'mega', 0, gx, h + 2.6, tz, 28, 5.2, 28); // the ring: a wider drum atop
+          for (let k = 0; k < 8; k++) { const a = (k / 8) * Math.PI * 2; leds.push({ x: gx + Math.cos(a) * 11.2, y: h / 2, z: tz + Math.sin(a) * 11.2, w: 0.2, h: h - 2, d: 0.2, color: '#C8FF00' }); }
+          top = Math.max(top, h + 5.2);
+        }
+      }
+      extraBeacons.push({ x: gx, y: top + 1.5, z: tz });
+    }
+    if (deckTop - under >= 8) { // the bridge building over the avenue: from tower to tower, the roads and the median beneath
+      const h = deckTop - under;
+      solid(core, 'facade', 'bridge', texOf((q) => q.win === 'curtain'), gx, under + h / 2, 0, 26, h, 2 * G - 24 + 2); // between the towers' inner faces
+      for (const s of [-1, 1]) { // a giant screen on each face, looking down the avenue
+        signs.push({ x: gx + s * 13.2, y: under + h / 2, z: 0, rotY: s > 0 ? Math.PI / 2 : -Math.PI / 2, w: 40, h: h - 3, color: '#ffffff', kind: 'screen' });
+        for (const u of [-14, 0, 14]) spots.push(gx + s * 14, deckTop + 0.8, u);
+        leds.push({ x: gx + s * 13.1, y: under + 0.2, z: 0, w: 0.18, h: 0.18, d: 2 * G - 22, color: '#5df2ff' }); // the underside's edges
+        leds.push({ x: gx + s * 13.1, y: deckTop - 0.2, z: 0, w: 0.18, h: 0.18, d: 2 * G - 22, color: '#ff4fd8' });
+      }
+      for (let u = -30; u <= 30; u += 6) for (const zz of [-19, 0, 19]) lantern(gx + (u % 12 === 0 ? 0 : 3), under - 1.2, zz + u * 0.3); // lanterns under it, over the roads and the median
+      for (const zz of [-19, 19]) for (const s of [-1, 1]) leds.push({ x: gx + s * 13, y: 5, z: zz, w: 0.16, h: 9.6, d: 0.16, color: '#ffb347' }); // the road portals' amber jambs
+      holos.push({ x: gx, y: Math.max(top, deckTop) + 18, z: 0, w: 30, h: 6, rotY: 0, kind: 'ring' }); // a ring of glyphs turning over the gate
+      pois.push({ x: gx, y: under + h / 2, z: 0, w: 2.4 });
+      gates.push({ x: gx, under, deck: deckTop, top });
+    } else gates.push({ x: gx, under: 0, deck: 0, top });
+  };
+  avenueGate(-4 * G, 0); avenueGate(4 * G, 1);
   bucket = outer;
   for (let bx = 8; bx <= 10; bx++) {
     for (let bz = -10; bz <= -8; bz++) {
@@ -1814,7 +1869,7 @@ export function planCity(seed: number): Plan {
   for (const k of [-6, -3, 3, 6]) {
     for (const s of [-1, 1]) { gantry('z', s * streetAt(0), k * G); gantry('x', s * streetAt(0), k * G); }
   }
-  for (const k of [-5, -2, 2, 5]) { // footbridges over the tree-lined avenue
+  for (const k of [-5, -2, 2, 5]) { // footbridges over the tree-lined avenue (the gates at ±4 bridge it themselves)
     const x = k * G;
     solid(core, 'dark', 'bridge', 0, x, 9.5, 0, 3, 0.5, 56);
     for (const s of [-1, 1]) solid(core, 'dark', 'street', 0, x, 4.75, s * 27, 0.6, 9.5, 0.6);
@@ -1849,7 +1904,7 @@ export function planCity(seed: number): Plan {
   // THE FESTIVAL on the boulevard's median (owner: gatherings, festivals, a lively boulevard): bunting strung between the
   // trees with paper lanterns, two stages with screens and a crowd before each, more stalls
   for (let t = -EXT + 14; t <= EXT - 14; t += 14) {
-    if (Math.abs(t) < 34 || onStreet(t)) continue;
+    if (Math.abs(t) < 34 || onStreet(t) || Math.abs(Math.abs(t) - 4 * G) < 16) continue; // (not under a gate)
     wires.push(t, 4.9, -7.5, t, 4.4, 0, t, 4.4, 0, t, 4.9, 7.5); // the bunting's line, sagging to the middle
     for (const u of [-5, -2.5, 0, 2.5, 5]) lantern(t, 4.55 - Math.abs(u) * 0.06 + 0.0, u);
   }
@@ -2197,7 +2252,6 @@ export function planCity(seed: number): Plan {
   }
   // -- TOWER CRANES (owner: a city still building itself): three, on flat roofs at mid height, clear of the
   // route and the highway, a red lamp on the mast, a lantern at the jib's tip ------------------------------
-  const extraBeacons: { x: number; y: number; z: number }[] = [];
   for (const t of tall.filter((q) => q.flat && q.top > 40 && q.top < 90 && allowedTop(q.x, q.z, q.w + 40, q.d + 40) === Infinity).slice(0, 3)) {
     const alongX = rand() < 0.5, dir = rand() < 0.5 ? 1 : -1;
     const mx = t.x + (rand() - 0.5) * t.w * 0.4, mz = t.z + (rand() - 0.5) * t.d * 0.4, mt = t.top + 22;
@@ -2587,7 +2641,7 @@ export function planCity(seed: number): Plan {
   return {
     core, outer, sprawl, strips, leds, awnings, tarps, clutter, billboards, spots, signs, posts, lanterns, wires, vents, holos, stalls, sprawlLamps, neon,
     beacons, pois, streets, stadium, wheel, mega, stacks, bridges, styles, sprawlTex, grid, landmark, roomAhead, air, pads, rail, piers, patches, parked, poles, superblocks, doors, lifts, subways,
-    parties, perches, stages,
+    parties, perches, stages, gates,
   };
 }
 
