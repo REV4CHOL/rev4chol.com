@@ -45,3 +45,4 @@ longer drawn.
 ## Status
 
 Built 2026-09-07 (d6c86f0).
+- [x] Follow-up — HASH `feat(about): the endless city's roads, paint, lamps, water, bridges and far traffic through the tiles` (seamless borders: the strips, the junction paint, the glow, the bars, the copied avenues' water and decks, bridges on the real canal past the fence, trees and structural darks among the masses, GPU-driven far traffic).

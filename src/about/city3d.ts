@@ -31,7 +31,7 @@ import {
   CylinderGeometry, DirectionalLight, DoubleSide, FogExp2, Group, HemisphereLight, InstancedBufferAttribute,
   InstancedBufferGeometry, InstancedMesh, LinearFilter, LinearMipmapLinearFilter, LineBasicMaterial, LineSegments, Material, Matrix4, Mesh, MeshBasicMaterial,
   MeshLambertMaterial, MeshStandardMaterial, NearestFilter, NeutralToneMapping, NoColorSpace, Object3D, PCFSoftShadowMap, PerspectiveCamera, PlaneGeometry, PMREMGenerator, PointLight, Points, Shape, ShapeGeometry,
-  PointsMaterial, RepeatWrapping, RGBAFormat, RingGeometry, Scene, ShaderChunk, SphereGeometry, Sprite, SpriteMaterial,
+  PointsMaterial, RepeatWrapping, RGBAFormat, RingGeometry, Scene, UniformsUtils, UniformsLib, ShaderMaterial, ShaderChunk, SphereGeometry, Sprite, SpriteMaterial,
   SRGBColorSpace, TorusGeometry, Vector2, Vector3, WebGLRenderer,
 } from 'three';
 import type { WebGLProgramParametersWithUniforms, WebGLRenderTarget } from 'three';
@@ -43,7 +43,7 @@ import { isMobile, reducedMotion } from '../lib/env';
 import { mulberry32 } from '../lib/rng';
 import {
   AirLane, ART_COLOR, ARTERIAL, ARTERIAL_ROW, arterialLat, ARTS, AutoFlight, bandPoint, bandPositions, BOUND, CAM_R, CANAL, DIAGONAL, EXT, G, HALF, HIGHWAY, HoloKind, LANE_CAR, LANE_W, OUTER,
-  carriagewayAt, CAT_TAIL, catTailBoxes, cityTiles, hasShop, planCity, Poi, RAIL, RAMP_W, rampY, ROAD, Searchlight, Sign, signColor, Solid, starPositions, streetAt, STREET, Street, tourRoute,
+  carriagewayAt, CAT_TAIL, catTailBoxes, cityTiles, CityTile, hasShop, planCity, Poi, RAIL, RAMP_W, rampY, ROAD, Searchlight, Sign, signColor, Solid, starPositions, streetAt, STREET, Street, TILE_P, tourRoute,
 } from './city-plan';
 import { fov24, HazePass, LensPass, lensTarget } from './city-post';
 import { CAST, People, Zone, marketZones } from './city-people';
@@ -1456,6 +1456,18 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   const deckStrip = roadStrip(HIGHWAY.width, [2.6, 5.0], DECK_KERB - 0.1, 0.8, false, aniso); // three lanes a side about a median (OFFSETS.highway)
   const rampStrip = roadStrip(RAMP_W, [], RAMP_W / 2 - 0.4, 0, false, aniso); // one lane
   const arterialStrip = arterialStripTextures(aniso); // the carriageway about its median, the aprons, the pavements (OFFSETS.arterial)
+  // THE ENDLESS CITY'S TILES (city-plan's cityTiles): everything the copies carry — the masses, the road strips, the
+  // lamps, the LED bars, the far traffic — maps through these (owner: "we can't just leave these roads empty outside
+  // the boundaries like this. Animate them too like our city within the boundaries. I want our borders to look seamless")
+  const tiles = cityTiles(isMobile() ? 1 : 2); // (a phone never reaches the high tier: its second ring is never built)
+  const tileMeshes: Record<number, Object3D[]> = { 1: [], 2: [] }; // the rings' objects, gated by tier (applyTier)
+  const tileShow = <T extends Object3D>(ring: number, o: T): T => { o.visible = ring === 1 || tier >= 2; tileMeshes[ring].push(o); return o; };
+  const tileYaw = (t: CityTile) => t.q * Math.PI / 2;
+  const tileXZ = (t: CityTile, x: number, z: number): [number, number] => { const a = tileYaw(t), c = Math.cos(a), sn = Math.sin(a); return [x * c + z * sn + t.dx, -x * sn + z * c + t.dz]; };
+  const tileDir = (t: CityTile, dx: number, dz: number): [number, number] => { const a = tileYaw(t), c = Math.cos(a), sn = Math.sin(a); const rx = dx * c + dz * sn, rz = -dx * sn + dz * c; return [Math.abs(rx) < 1e-9 ? 0 : rx, Math.abs(rz) < 1e-9 ? 0 : rz]; };
+  const tileStreet = (t: CityTile, st: Street): Street => { const [x0, z0] = tileXZ(t, st.x0, st.z0); const [dx, dz] = tileDir(t, st.dx, st.dz); return { ...st, x0, z0, dx, dz }; };
+  // the real canal runs the whole ground: past the fence it carries the city's bridges at the copied crossings
+  const bridgesBeyond = plan.bridges.filter((b) => b.yaw === 0).flatMap((b) => (isMobile() ? [-1, 1] : [-2, -1, 1, 2]).map((k) => ({ ...b, z: b.z + k * TILE_P })));
   const laidRoad = (st: Street, y: number, width: number, strip = boulevardStrip, offset = 0) => {
     const m = new Mesh(new PlaneGeometry(st.len, width), streetMat(strip, st.len / 12, offset));
     m.receiveShadow = true;
@@ -1463,6 +1475,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     m.rotation.y = Math.atan2(-st.dz, st.dx);
     m.rotateX(-Math.PI / 2);
     scene.add(m);
+    return m;
   };
   const deckDark = new MeshBasicMaterial({ color: '#0a0c1e' });
   const bridgeLamps: number[] = []; // the canal bridges' lamp poles and lanterns, lit below with the rail's lights
@@ -1620,7 +1633,6 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     k === 'cyl' ? geo.cyl : k === 'pyr' ? geo.pyr : k === 'spire' ? geo.spire : k === 'dome' ? geo.dome : k === 'tree' ? geo.tree : geo.box;
   const dummy = new Object3D();
   interface Bucket { kind: Solid['kind']; key: string; far: boolean; tile: number; mats: Matrix4[]; skins: number[]; tints: number[] }
-  const tileMeshes: Record<number, InstancedMesh[]> = { 1: [], 2: [] }; // the endless city's rings, gated by tier
   const buckets = new Map<string, Bucket>();
   const shopfronts: { x: number; z: number; w: number; d: number }[] = []; // lit ground floors: they wash the pavement before them
   const place = (s: Solid, far: boolean, tile?: { m: Matrix4; ring: number; rand: () => number }) => {
@@ -1665,10 +1677,11 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   {
     const tileRand = mulberry32(seed ^ 0x7ab1e5);
     const tileM = new Matrix4(), tileR = new Matrix4();
-    const MASS = new Set<Solid['kind']>(['facade', 'cyl', 'spire', 'pyr', 'dome']);
+    const MASS = new Set<Solid['kind']>(['facade', 'cyl', 'spire', 'pyr', 'dome', 'tree']);
     const LANDMARK = new Set<Solid['arch']>(['mega', 'landmark', 'citadel']);
-    const masses = [...plan.core, ...plan.outer].filter((s) => MASS.has(s.kind) && !LANDMARK.has(s.arch));
-    for (const t of cityTiles(isMobile() ? 1 : 2)) { // (a phone never reaches the high tier: its second ring is never built)
+    // (the structural darks come too — piers, tanks, legs: anything six up and over a unit across — so the copied decks stand on something; the kit stays home)
+    const masses = [...plan.core, ...plan.outer].filter((s) => (MASS.has(s.kind) || (s.kind === 'dark' && s.h >= 6 && Math.min(s.w, s.d) >= 1.2)) && !LANDMARK.has(s.arch));
+    for (const t of tiles) {
       tileM.makeTranslation(t.dx, 0, t.dz).multiply(tileR.makeRotationY(t.q * Math.PI / 2));
       for (const s of masses) place(s, false, { m: tileM, ring: t.ring, rand: tileRand });
     }
@@ -1687,9 +1700,117 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     }
     inst.castShadow = !b.far && !b.tile && b.kind !== 'tree'; // the sprawl is fog's; the trees would only speckle; the tiles are too far for a shadow
     inst.receiveShadow = !b.far && !b.tile;
-    if (b.tile) { tileMeshes[b.tile].push(inst); inst.visible = b.tile === 1 || tier >= 2; } // (ring 1 at every tier, ring 2 from high)
+    if (b.tile) tileShow(b.tile, inst); // (ring 1 at every tier, ring 2 from high)
     scene.add(inst);
   }
+  // THE ENDLESS CITY'S ROADS (owner: seamless borders): every tile carries the arterial's strip, the boulevard's, the
+  // highway's deck, and the canal's water where the copied avenue runs (the grid roads and lanes are laid with the
+  // city's own, further down; the junction paint, the lamps, the LED bars and the far traffic follow)
+  const tileWaterTex = waterTexture(rand);
+  tileWaterTex.repeat.set(1, TILE_P / 64);
+  for (const t of tiles) {
+    for (const st of plan.streets) {
+      if (st.kind === 'arterial') tileShow(t.ring, laidRoad(tileStreet(t, st), 0.05, 2 * ARTERIAL_ROW, arterialStrip, 5));
+      if (st.kind === 'diagonal') tileShow(t.ring, laidRoad(tileStreet(t, st), 0.05, DIAGONAL.width + 4, boulevardStrip, 4));
+      if (st.kind === 'highway') {
+        const ts = tileStreet(t, st);
+        const deck = new Mesh(new BoxGeometry(ts.len, 0.8, ts.width), [deckDark, deckDark, streetMat(deckStrip, ts.len / 12), deckDark, deckDark, deckDark]);
+        deck.position.set(ts.x0 + ts.dx * ts.len / 2, HIGHWAY.y, ts.z0 + ts.dz * ts.len / 2);
+        deck.rotation.y = Math.atan2(-ts.dz, ts.dx);
+        scene.add(tileShow(t.ring, deck));
+      }
+    }
+    // the copied avenue's water: the canal's tone and its moving sheen laid on the ground (the real canal is sunk between
+    // quay walls; at four hundred units the walls are nothing and the water everything)
+    const [wx, wz] = tileXZ(t, 0, 0);
+    const wtr = new Mesh(new PlaneGeometry(CANAL.w, TILE_P), new MeshBasicMaterial({ color: '#040812' }));
+    wtr.rotation.order = 'YXZ'; wtr.rotation.set(-Math.PI / 2, tileYaw(t), 0); wtr.position.set(wx, 0.02, wz);
+    scene.add(tileShow(t.ring, wtr));
+    const sheen = new Mesh(new PlaneGeometry(CANAL.w, TILE_P), additiveFog(new MeshBasicMaterial({ map: tileWaterTex, transparent: true, opacity: 0.32, blending: AdditiveBlending, depthWrite: false })));
+    sheen.rotation.order = 'YXZ'; sheen.rotation.set(-Math.PI / 2, tileYaw(t), 0); sheen.position.set(wx, 0.05, wz);
+    scene.add(tileShow(t.ring, sheen));
+  }
+  // THE FAR TRAFFIC (owner: "animate them too, like our city within"): the copies' streets carry moving lights — a warm
+  // head and a red tail a vehicle — in every lane of every road, lane, arterial, boulevard and highway deck, each vehicle
+  // riding its lane at its own speed on the GPU (a start, a phase, a speed, a lane: the vertex shader does the driving,
+  // nothing is simulated); one Points a ring, dimmed by day with the lamps, fogged as the lamps' pools are
+  const farTime = { value: 0 };
+  const farMats: ShaderMaterial[] = [];
+  {
+    const OFF: Record<string, number[]> = { road: [1.35, 3.75], diagonal: [1.35, 3.75], highway: [1.4, 3.8, 6.2], arterial: [3.0, 5.4], lane: [1.4] }; // (city-traffic's OFFSETS)
+    const SPD: Record<string, [number, number]> = { road: [12, 17], diagonal: [13, 18], highway: [24, 31], arterial: [16, 21], lane: [7, 10] }; // units a second
+    const HEAD = new Color('#fff2d8'), TAIL = new Color('#ff3b2f').multiplyScalar(0.7);
+    const farRand = mulberry32(seed ^ 0x5eed7a);
+    for (const ring of [1, 2] as const) {
+      const ts = tiles.filter((t) => t.ring === ring);
+      if (!ts.length) continue;
+      const pos: number[] = [], dir: number[] = [], len: number[] = [], phase: number[] = [], speed: number[] = [], lat: number[] = [], head: number[] = [], col: number[] = [];
+      for (const t of ts) for (const st of plan.streets) {
+        const offs = OFF[st.kind];
+        if (!offs || st.len < 30 || st.y1 !== undefined) continue;
+        const tst = tileStreet(t, st);
+        const [s0, s1] = SPD[st.kind];
+        for (const o of offs) for (const side of [-1, 1]) { // a lane each side of the axis at each offset, each side's traffic running its own way
+          const n = Math.max(1, Math.round(tst.len / (ring === 1 ? 40 : 60) * (0.7 + farRand() * 0.6)));
+          const dx = tst.dx * side, dz = tst.dz * side; // the movement's direction
+          const x0 = side > 0 ? tst.x0 : tst.x0 + tst.dx * tst.len, z0 = side > 0 ? tst.z0 : tst.z0 + tst.dz * tst.len; // from the end it starts at
+          const y = st.y + 0.55;
+          for (let i = 0; i < n; i++) {
+            const ph = farRand() * tst.len, v = s0 + farRand() * (s1 - s0);
+            for (const [h, c] of [[1.0, HEAD], [-1.0, TAIL]] as [number, Color][]) {
+              pos.push(x0, y, z0); dir.push(dx, dz); len.push(tst.len); phase.push(ph); speed.push(v); lat.push(-o); head.push(h); col.push(c.r, c.g, c.b);
+            }
+          }
+        }
+      }
+      const g = new BufferGeometry();
+      g.setAttribute('position', new BufferAttribute(new Float32Array(pos), 3));
+      g.setAttribute('aDir', new BufferAttribute(new Float32Array(dir), 2));
+      g.setAttribute('aLen', new BufferAttribute(new Float32Array(len), 1));
+      g.setAttribute('aPhase', new BufferAttribute(new Float32Array(phase), 1));
+      g.setAttribute('aSpeed', new BufferAttribute(new Float32Array(speed), 1));
+      g.setAttribute('aLat', new BufferAttribute(new Float32Array(lat), 1));
+      g.setAttribute('aHead', new BufferAttribute(new Float32Array(head), 1));
+      g.setAttribute('aColor', new BufferAttribute(new Float32Array(col), 3));
+      const mat = new ShaderMaterial({
+        uniforms: UniformsUtils.merge([UniformsLib.fog, { uTime: { value: 0 }, uScale: { value: 270 }, uSize: { value: 1.5 }, uLamps: { value: 1 } }]),
+        vertexShader: [
+          '#include <fog_pars_vertex>',
+          'attribute vec2 aDir; attribute float aLen; attribute float aPhase; attribute float aSpeed; attribute float aLat; attribute float aHead; attribute vec3 aColor;',
+          'uniform float uTime; uniform float uScale; uniform float uSize;',
+          'varying vec3 vColor;',
+          'void main() {',
+          '  float s = mod( aPhase + uTime * aSpeed, aLen );',
+          '  vec3 dir = vec3( aDir.x, 0.0, aDir.y );',
+          '  vec3 p = position + dir * ( s + aHead ) + vec3( -aDir.y, 0.0, aDir.x ) * aLat;',
+          '  vec4 mvPosition = modelViewMatrix * vec4( p, 1.0 );',
+          '  gl_Position = projectionMatrix * mvPosition;',
+          '  gl_PointSize = max( 1.0, uSize * uScale / max( 1.0, -mvPosition.z ) );',
+          '  vColor = aColor;',
+          '  #include <fog_vertex>',
+          '}',
+        ].join('\n'),
+        fragmentShader: [
+          '#include <fog_pars_fragment>',
+          'uniform float uLamps;',
+          'varying vec3 vColor;',
+          'void main() {',
+          '  vec2 q = gl_PointCoord - 0.5;',
+          '  float d = length( q );',
+          '  if ( d > 0.5 ) discard;',
+          '  float a = smoothstep( 0.5, 0.12, d );',
+          '  gl_FragColor = vec4( vColor * uLamps, a );',
+        ].join('\n') + '\n' + FOG_ADD + '\n}',
+        transparent: true, depthWrite: false, blending: AdditiveBlending, fog: true,
+      });
+      mat.uniforms.uTime = farTime; // (merge clones its uniforms: the clock is shared by hand)
+      farMats.push(mat);
+      const pts = new Points(g, mat);
+      pts.frustumCulled = false; // (the vehicles drive the length of their streets: no static bounds hold them)
+      scene.add(tileShow(ring, pts));
+    }
+  }
+
   // -- THE CANAL'S BRIDGES (owner: real bridges, elegant and detailed, not planks): a concrete deck carrying
   // the road's paint, a steel bowstring arch each side springing from abutments on the quays, hangers, portal
   // braces between the arches, handrails on balusters -----------------------------------------------------------
@@ -1700,7 +1821,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     const bridgeStrip = roadStrip(STREET, [2.55], 4.9, 0, true, aniso); // the street's full width: its pavements cross on the deck
     const SEG = 12, HANG = [-9, -6, -3, 0, 3, 6, 9], BAL = 13, RISE = 6.2, HALF_SPAN = 12, DECK_Y = CANAL.deck; // flush with the streets: the water lies below (owner: the approach wedges sat inside the quay crossings)
     const archY = (x: number) => DECK_Y + 0.3 + RISE * (1 - (x / HALF_SPAN) ** 2);
-    const ews = plan.bridges.filter((b) => b.yaw === 0);
+    const ews = [...plan.bridges.filter((b) => b.yaw === 0), ...bridgesBeyond]; // (past the fence too: the real canal runs on)
     const nB = ews.length;
     const arches = new InstancedMesh(geo.box, steel, (SEG * 2 + HANG.length * 2 + 3) * nB);
     const rails = new InstancedMesh(geo.box, railMat, (2 + BAL * 2) * nB);
@@ -1760,6 +1881,23 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     }
     arches.count = ia; rails.count = ir;
     for (const inst of [arches, rails]) { inst.instanceMatrix.needsUpdate = true; inst.castShadow = true; inst.receiveShadow = true; scene.add(inst); }
+    { // THE COPIED AVENUES' BRIDGES (owner: seamless borders): a deck at every copied crossing, one instanced mesh a ring —
+      // the arches and rails stay home, their glow (the rail lights, the lamps) goes through the tiles below
+      const real = plan.bridges.filter((b) => b.yaw === 0);
+      for (const ring of [1, 2] as const) {
+        const ts = tiles.filter((t) => t.ring === ring);
+        if (!ts.length || !real.length) continue;
+        const decks = new InstancedMesh(new BoxGeometry(2 * HALF_SPAN + 2, 0.6, STREET), [concrete, concrete, streetMat(bridgeStrip, (2 * HALF_SPAN + 2) / 12), concrete, concrete, concrete], ts.length * real.length);
+        let k = 0;
+        for (const t of ts) for (const b of real) {
+          const [x, z] = tileXZ(t, b.x, b.z);
+          dummy.rotation.set(0, tileYaw(t), 0); dummy.position.set(x, DECK_Y - 0.3, z); dummy.scale.set(1, 1, 1); dummy.updateMatrix(); decks.setMatrixAt(k++, dummy.matrix);
+        }
+        dummy.rotation.set(0, 0, 0);
+        decks.instanceMatrix.needsUpdate = true;
+        scene.add(tileShow(ring, decks));
+      }
+    }
     for (const b of plan.bridges.filter((b) => b.yaw !== 0)) { // the arterial's: a flush girder deck the width of its right of way, balustrades along both edges
       const deck = new Mesh(new BoxGeometry(b.span, 0.6, b.w), concrete);
       deck.position.set(b.x, DECK_Y - 0.3, b.z); deck.rotation.y = b.yaw; deck.receiveShadow = true; deck.castShadow = true;
@@ -1990,8 +2128,15 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     if (inst.instanceColor) inst.instanceColor.needsUpdate = true;
     scene.add(inst);
   };
+  /** The same bars through the first ring (owner: seamless borders): a turned tile turns a bar's footprint too. */
+  const tileBars = (list: typeof plan.strips, power: number) => {
+    const ts = tiles.filter((t) => t.ring === 1);
+    bars(ts.flatMap((t) => list.map((b) => { const [x, z] = tileXZ(t, b.x, b.z); const turned = t.q % 2 === 1; return { ...b, x, z, w: turned ? b.d : b.w, d: turned ? b.w : b.d }; })), power);
+  };
   bars(plan.strips, 1);
   bars(plan.leds, 0.45);
+  tileBars(plan.strips, 1);
+  tileBars(plan.leds, 0.45);
   bars(plan.awnings, 0.35);
   bars(plan.tarps, 0.5); // the tarps over the shacks and the stalls
   { // the market's canopies
@@ -2402,6 +2547,17 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     scene.add(pts);
     return pts;
   };
+  /** The same glow through the endless city's tiles (owner: seamless borders): a Points a ring, gated by tier. */
+  const tileGlow = (pos: number[] | Float32Array, color: string, size: number, opacity = 1) => {
+    for (const ring of [1, 2] as const) {
+      const ts = tiles.filter((t) => t.ring === ring);
+      if (!ts.length || !pos.length) continue;
+      const out = new Float32Array(pos.length * ts.length);
+      let k = 0;
+      for (const t of ts) for (let i = 0; i < pos.length; i += 3) { const [x, z] = tileXZ(t, pos[i], pos[i + 2]); out[k++] = x; out[k++] = pos[i + 1]; out[k++] = z; }
+      tileShow(ring, glowPoints(out, color, size, opacity));
+    }
+  };
   {
     // LAMP POSTS (owner: real lamp posts, heads and all): a post, an arm out over the carriageway, a lantern
     // that glows by night and reads as a fixture by day; the arm points at the nearest carriageway's axis
@@ -2433,6 +2589,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     dummy.rotation.set(0, 0, 0);
     for (const inst of [posts, arms, lanterns]) { inst.instanceMatrix.needsUpdate = true; scene.add(inst); }
     glowPoints(heads, '#ffe9c9', 4.5);
+    tileGlow(heads, '#ffe9c9', 4.5); // the endless city's lamps: the city's own, through the tiles
     // AERIALS (owner: antennas that read as antennas): a base, crossbars up the mast, a red lamp at the tip
     const bars = new InstancedMesh(geo.box, mastMat, masts.length * 3);
     const tips = new Float32Array(masts.length * 3);
@@ -2445,12 +2602,14 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     bars.instanceMatrix.needsUpdate = true;
     scene.add(bars);
     glowPoints(tips, '#ff3b3b', 1.6, 0.9);
-    glowPoints(plan.sprawlLamps, '#ffd9a0', 3);
+    // (the sprawl's placeholder lamps are gone: the tiles carry the city's own lamp heads)
     glowPoints(plan.lanterns, '#ffb36b', 3);
+    tileGlow(plan.lanterns, '#ffb36b', 3);
     glowPoints(plan.spots, '#ffffff', 2.2, 0.9); // the billboards' lamps
     const rail: number[] = [];
-    for (const b of plan.bridges) for (let x = -12; x <= 12; x += 2.4) for (const s of [-1, 1]) rail.push(x, 2.5, b.z + s * 5.4);
+    for (const b of [...plan.bridges, ...bridgesBeyond]) for (let x = -12; x <= 12; x += 2.4) for (const s of [-1, 1]) rail.push(x, 2.5, b.z + s * 5.4);
     glowPoints(rail, '#ffd9a0', 2);
+    tileGlow(rail, '#ffd9a0', 2); // (the copied crossings' rails)
   }
   // -- THE KIT (owner: a lived-in city — Ghost in the Shell's walls): every small thing the plan crusted on the
   // walls and the roofs, one instanced mesh per kind, coloured per instance; and THE CATWALKS across the alleys,
@@ -2572,7 +2731,9 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     for (const inst of [deck, rails3]) { inst.instanceMatrix.needsUpdate = true; inst.castShadow = true; inst.receiveShadow = true; scene.add(inst); }
     glowPoints(railLights, '#ffb347', 2.0, 0.8);
     glowPoints(deckLights, '#dfe6ff', 2.4, 0.7); // the cold tubes under the deck
+    tileGlow(deckLights, '#dfe6ff', 2.4, 0.7);
     glowPoints(bridgeLamps, '#ffe9c9', 3.0, 0.9); // the bridges' lamp poles and lanterns
+    tileGlow(bridgeLamps, '#ffe9c9', 3.0, 0.9);
     for (const st of plan.rail.stations) {
       const along = Math.abs(st.dx) > 0.5;
       const canopy = new Mesh(new BoxGeometry(along ? 22 : 9.4, 0.4, along ? 9.4 : 22), canopyMat);
@@ -2971,12 +3132,20 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
       const m = new Mesh(g, streetMat(strip, 1, offset)); (m.material as MeshLambertMaterial).side = DoubleSide;
       m.receiveShadow = true;
       scene.add(m);
+      return m;
     };
     const roads = plan.streets.filter((st) => st.kind === 'road'), lanes = plan.streets.filter((st) => st.kind === 'lane');
     layStrips(roads.filter((st) => st.dz === 0), 0.044, STREET, roadStripTex, 0);
     layStrips(roads.filter((st) => st.dz !== 0), 0.046, STREET, roadStripTex, 1);
     layStrips(lanes.filter((st) => st.dz === 0), 0.048, LANE_W, laneStripTex, 2);
     layStrips(lanes.filter((st) => st.dz !== 0), 0.048, LANE_W, laneStripTex, 3);
+    for (const ring of [1, 2] as const) { // THE ENDLESS CITY'S grid roads and lanes: the same strips through the tiles, one merged mesh per axis a ring (no node trims them there: they run through)
+      const ts = tiles.filter((t) => t.ring === ring);
+      if (!ts.length) continue;
+      const copies = (list: Street[]) => ts.flatMap((t) => list.map((st) => tileStreet(t, st)));
+      const tr = copies(roads), tl = copies(lanes);
+      for (const m of [layStrips(tr.filter((st) => st.dz === 0), 0.044, STREET, roadStripTex, 0), layStrips(tr.filter((st) => st.dz !== 0), 0.046, STREET, roadStripTex, 1), layStrips(tl.filter((st) => st.dz === 0), 0.048, LANE_W, laneStripTex, 2), layStrips(tl.filter((st) => st.dz !== 0), 0.048, LANE_W, laneStripTex, 3)]) if (m) tileShow(ring, m);
+    }
     // JUNCTIONS (owner: the ground paints no grid now — every junction is drawn from the traffic graph): at each node on
     // the ground where streets meet, a plain asphalt box per street over its reach through the node (its own paint and
     // the others' pavements blanked; only the crossing square where the street ends there), a zebra at the mouth of
@@ -2991,9 +3160,10 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     const lineMat = new MeshLambertMaterial({ color: '#e8eaf0', emissive: '#2c4a8e', emissiveIntensity: 1.5, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -9 });
     streetMats.push(zebraMat, lineMat);
     const flat = new PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
-    const boxes = new InstancedMesh(flat, boxMat, Math.max(1, junctions.length * 3));
-    const zebras = new InstancedMesh(flat, zebraMat, Math.max(1, junctions.length * 6));
-    const stops = new InstancedMesh(flat, lineMat, Math.max(1, junctions.length * 6));
+    const TILES1 = tiles.filter((t) => t.ring === 1).length + 1; // (the first ring wears the same paint: room for the copies)
+    const boxes = new InstancedMesh(flat, boxMat, Math.max(1, junctions.length * 3 * TILES1));
+    const zebras = new InstancedMesh(flat, zebraMat, Math.max(1, junctions.length * 6 * TILES1));
+    const stops = new InstancedMesh(flat, lineMat, Math.max(1, junctions.length * 6 * TILES1));
     let jb = 0, jz = 0, js = 0;
     for (const n of junctions) {
       const allRoads = n.streets.every((q) => q.kind !== 'lane');
@@ -3039,6 +3209,12 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
         m.position.y = 0.052; m.receiveShadow = true;
         scene.add(m);
       }
+    }
+    { // the first ring's junctions wear the same paint (owner: seamless borders): every box, zebra and line through the tiles
+      const ts = tiles.filter((t) => t.ring === 1);
+      const src = new Matrix4(), tm = new Matrix4(), tr = new Matrix4();
+      const copy = (inst: InstancedMesh, n: number) => { let k = n; for (const t of ts) { tm.makeTranslation(t.dx, 0, t.dz).multiply(tr.makeRotationY(tileYaw(t))); for (let i = 0; i < n; i++) { inst.getMatrixAt(i, src); inst.setMatrixAt(k++, tm.clone().multiply(src)); } } return k; };
+      jb = copy(boxes, jb); jz = copy(zebras, jz); js = copy(stops, js);
     }
     boxes.count = jb; zebras.count = jz; stops.count = js;
     dummy.rotation.set(0, 0, 0);
@@ -3670,7 +3846,6 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     const pools: { x: number; y: number; z: number; r: number; color: string; a: number }[] = [];
     // (sixteen thousand of them: a budget — wider or stronger than this and the streets sum to white, measured)
     for (const p of plan.posts) pools.push({ x: p.x, y: p.y ?? 0, z: p.z, r: p.h * (1.4 + rand() * 0.5), color: '#ffe2b8', a: 1 });
-    for (let i = 0; i < plan.sprawlLamps.length; i += 3) pools.push({ x: plan.sprawlLamps[i], y: 0, z: plan.sprawlLamps[i + 2], r: 7, color: '#ffd9a0', a: 0.55 });
     for (let i = 0; i < plan.lanterns.length; i += 3) pools.push({ x: plan.lanterns[i], y: 0, z: plan.lanterns[i + 2], r: 3.2, color: '#ffb36b', a: 0.45 });
     for (const st of plan.stalls) pools.push({ x: st.x, y: 0, z: st.z, r: 4.5, color: st.color, a: 0.55 });
     for (const b of plan.billboards) { // a low lit board lays its art's colour on the pavement
@@ -3706,7 +3881,6 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     // (32 cd: at 55 the eighteen nearest lamps, a few units from a low eye, whited the road out — measured 230,220,246 mean)
     for (const p of plan.posts) practicals.push({ x: p.x, y: (p.y ?? 0) + p.h + 0.2, z: p.z, color: LAMP, power: 32, reach: 30 });
     if (plan.cat) for (const sx of [-1, 1]) practicals.push({ x: plan.cat.x + Math.cos(plan.cat.yaw) * sx * plan.cat.w * 0.4, y: plan.cat.y + 1.2, z: plan.cat.z - Math.sin(plan.cat.yaw) * sx * plan.cat.w * 0.4, color: new Color('#ffb36b'), power: 60, reach: 40 }); // the cat's spots
-    for (let i = 0; i < plan.sprawlLamps.length; i += 3) practicals.push({ x: plan.sprawlLamps[i], y: plan.sprawlLamps[i + 1], z: plan.sprawlLamps[i + 2], color: new Color('#ffd9a0'), power: 24, reach: 24 });
     for (let i = 0; i < plan.lanterns.length; i += 3) practicals.push({ x: plan.lanterns[i], y: plan.lanterns[i + 1], z: plan.lanterns[i + 2], color: new Color('#ffb36b'), power: 9, reach: 14 });
     for (const sg of plan.signs) {
       if (sg.kind === 'gantry') continue;
@@ -3873,6 +4047,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     const s = isMobile() ? phoneScale : deskScale();
     renderer.setSize(Math.ceil(w * s), Math.ceil(h * s), false);
     composer.setSize(Math.ceil(w * s), Math.ceil(h * s));
+    for (const m of farMats) m.uniforms.uScale.value = Math.ceil(h * s) / 2; // the far traffic's point size follows the frame
     camera.aspect = w / h;
     camera.fov = fov24(camera.aspect); // a 24mm across the long edge
     camera.updateProjectionMatrix();
@@ -3890,6 +4065,9 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   let peopleSlow = false, peopleCost = 0;
   const tickWorld = () => {
     tick += 1;
+    farTime.value += 1 / 60; // the far traffic drives on, calm or not (a sim, not an idle motion)
+    for (const m of farMats) m.uniforms.uLamps.value = lampLevel;
+    tileWaterTex.offset.y = (tileWaterTex.offset.y + 0.0015) % 1;
     // CALM slows the city rather than stopping it (owner: "the whole city frozen" — calm had stilled every vehicle and
     // walker): the flicker, the sweep, the twinkle and the breathing are stilled; the traffic, the people, the trains,
     // the flyers and the boats go on

@@ -65,3 +65,29 @@ Commit d6c86f0, 2026-09-07. Built as designed, with two findings on the way:
 
 Numbers: 8,645 masses a tile; 69,160 instances in ring 1 (every tier, a phone builds this ring only), 207,480 with
 ring 2 (from the high tier); 4.4 ms of render at the high tier on the owner's PC with both rings.
+
+## Follow-up: the seams (2026-09-08, HASH)
+
+Owner, with a shot down the avenue past the fence: "we can't just leave these roads empty outside the boundaries like
+this. Animate them too like our city within the boundaries. I want our borders to look seamless." The tiles carried
+the masses alone: no road surface, no paint, no lamps, no traffic, and the copied avenues were bare ground while the
+real canal ran on past the fence with no bridges. Now every tile carries:
+
+- **the roads**: the grid roads and lanes through `layStrips` (the city's own merged strips; one mesh per axis a ring,
+  untrimmed since no traffic node lies there), the arterial's strip, the boulevard's, the highway's deck; the first
+  ring's junctions wear the same boxes, zebras and stop lines (the instanced paint copied through the tiles);
+- **the lamps and bars**: the lamp heads' glow, the lanterns, the deck tubes through both rings (`tileGlow`); the LED
+  strips and edges through the first (`tileBars`, a turned tile turning a bar's footprint); the sprawl's placeholder
+  lamps, their pools and practicals are gone;
+- **the water**: the copied avenues carry the canal's tone and its moving sheen laid on the ground (the real canal is
+  sunk between quay walls; at four hundred units the walls are nothing), and a deck at every copied crossing with the
+  rails' and lamps' glow; the real canal carries the city's bridges past the fence (`bridgesBeyond`);
+- **the masses**: trees and the structural darks (piers, tanks, legs: six up and over a unit across) join, so the copied
+  decks stand on something;
+- **the far traffic**: a warm head and a red tail a vehicle in every lane of every road, lane, arterial, boulevard and
+  deck, one Points a ring, the vertex shader driving each vehicle along its lane by a phase and a speed (nothing is
+  simulated), dimmed with the lamps by day, fogged as the pools are; the point size follows the frame. 55,722 lights
+  in the first ring at a vehicle every forty lane-units, thinner in the second.
+
+Measured on the pane: 3,022 pixels of a quay-road band change over sixty ticks (the lights move); 5.2 ms of render
+at the high tier with everything.
