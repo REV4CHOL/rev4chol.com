@@ -1,25 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { ARTERIAL, ARTERIAL_ROW, EXT, G, HALF, OUTER, planCity, REACH, streetAt } from '../src/about/city-plan';
-import { CAST, FRAME, KIND, People, Zone } from '../src/about/city-people';
+import { ARTERIAL, ARTERIAL_ROW, EXT, G, HALF, OUTER, planCity, REACH, streetAt, carriagewayAt } from '../src/about/city-plan';
+import { CAST, FRAME, KIND, People, Zone, marketZones } from '../src/about/city-people';
 import { mulberry32 } from '../src/lib/rng';
 import { hashSlug } from '../src/project/dossier';
 
 const plan = planCity(hashSlug('revachol-night-city'));
-/** Market zones: the stalls clustered, each cluster's bounds padded. */
-const zonesOf = (): Zone[] => {
-  const zones: Zone[] = [];
-  for (const s of plan.stalls) {
-    let z = zones.find((zn) => Math.abs(zn.x - s.x) < 30 && Math.abs(zn.z - s.z) < 30);
-    if (!z) { z = { x: s.x, z: s.z, w: 6, d: 6, stalls: [] }; zones.push(z); }
-    z.stalls.push(s);
-  }
-  for (const z of zones) {
-    const xs = z.stalls.map((s) => s.x), zs = z.stalls.map((s) => s.z);
-    const x0 = Math.min(...xs) - 3, x1 = Math.max(...xs) + 3, z0 = Math.min(...zs) - 3, z1 = Math.max(...zs) + 3;
-    z.x = (x0 + x1) / 2; z.z = (z0 + z1) / 2; z.w = x1 - x0; z.d = z1 - z0;
-  }
-  return zones;
-};
+/** Market zones: the stalls clustered, never across a carriageway, each cluster's bounds padded (city-people's). */
+const zonesOf = (): Zone[] => marketZones(plan.stalls, plan.streets);
 const nodes: number[] = [];
 for (let i = -HALF - OUTER - 1; i <= HALF + OUTER; i++) nodes.push(streetAt(i));
 
@@ -223,5 +210,37 @@ describe('People', () => {
     expect(nodes.length).toBe(2 * (HALF + OUTER + 1));
     expect(nodes[0]).toBeLessThan(-EXT);
     expect(G).toBe(38);
+  });
+
+  it('clusters the stalls into zones that never straddle a carriageway (owner: crowds in the middle of the traffic lanes)', () => {
+    const zones = marketZones(plan.stalls, plan.streets);
+    expect(zones.length).toBeGreaterThan(8); // the night market, three flea markets, three market streets, the stadium's two, the aprons' rows
+    let checked = 0;
+    for (const z of zones) {
+      for (let i = 0; i <= 6; i++) for (let j = 0; j <= 6; j++) {
+        const x = z.x - z.w / 2 + 1 + (z.w - 2) * i / 6, zz = z.z - z.d / 2 + 1 + (z.d - 2) * j / 6;
+        const road = carriagewayAt(plan.streets, x, zz);
+        expect(road === null || road.kind === 'alley', `a zone at ${z.x.toFixed(0)},${z.z.toFixed(0)} (${z.w.toFixed(0)}×${z.d.toFixed(0)}) over the ${road?.kind} at ${x.toFixed(0)},${zz.toFixed(0)}`).toBe(true);
+        checked += 1;
+      }
+    }
+    expect(checked).toBeGreaterThan(500);
+  });
+
+  it('stands nobody in a carriageway or on a roof: whoever mills, browses, talks, stands or vends is on the ground and off the road (owner)', () => {
+    const sim = new People(plan.streets, marketZones(plan.stalls, plan.streets), plan.stalls, mulberry32(9), 2400, () => true, nodes, {
+      solid: (x, y, z) => plan.grid.hit(x, y, z, 0.3) !== null,
+      onRoad: (x, z) => carriagewayAt(plan.streets, x, z) !== null,
+    });
+    for (let f = 0; f < 400; f++) sim.step();
+    let checked = 0;
+    for (const p of sim.people) {
+      if (p.act !== 'mill' && p.act !== 'browse' && p.act !== 'talk' && p.act !== 'stand' && p.act !== 'vend') continue;
+      const road = carriagewayAt(plan.streets, p.x, p.z);
+      expect(road === null || road.kind === 'alley' || road.kind === 'lane', `a ${p.act}er in the ${road?.kind} at ${p.x.toFixed(0)},${p.z.toFixed(0)}`).toBe(true); // (a knot at a lane's edge spills a step into the lane: Hanoi)
+      if (p.st?.kind !== 'catwalk') expect(p.y, `a ${p.act}er at ${p.y.toFixed(1)} up`).toBeLessThan(2.5); // (a knot on a footbridge or an arcade's walk stands at its height)
+      checked += 1;
+    }
+    expect(checked).toBeGreaterThan(300);
   });
 });

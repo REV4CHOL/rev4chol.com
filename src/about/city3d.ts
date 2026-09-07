@@ -43,11 +43,11 @@ import { isMobile, reducedMotion } from '../lib/env';
 import { mulberry32 } from '../lib/rng';
 import {
   AirLane, ART_COLOR, ARTERIAL, ARTERIAL_ROW, arterialLat, ARTS, AutoFlight, bandPoint, bandPositions, BOUND, CAM_R, CANAL, DIAGONAL, EXT, G, HALF, HIGHWAY, HoloKind, LANE_CAR, LANE_W, OUTER,
-  hasShop, planCity, Poi, RAIL, RAMP_W, rampY, ROAD, Sign, signColor, Solid, starPositions, streetAt, STREET, Street, tourRoute,
+  carriagewayAt, hasShop, planCity, Poi, RAIL, RAMP_W, rampY, ROAD, Sign, signColor, Solid, starPositions, streetAt, STREET, Street, tourRoute,
 } from './city-plan';
 import { fov24, LensPass, lensTarget } from './city-post';
 import { CityAudio } from './city-audio';
-import { CAST, People, Zone } from './city-people';
+import { CAST, People, Zone, marketZones } from './city-people';
 import { Runners } from './city-runners';
 import { blendLooks, ease, lerpHex, Look as SkyLook, LOOKS as SKY, paintSky, TimeOfDay } from './city-sky';
 import { armReach, convexHull, DECK_KERB, SPEC, throughReach, Traffic } from './city-traffic';
@@ -885,35 +885,35 @@ function moonTexture(): CanvasTexture {
  *  radial fall-off to nothing, a lit crown, a darker belly — greyscale, tinted by the look; `low` makes the
  *  dark silhouette tier that sits against the horizon glow. */
 function cloudTexture(rand: () => number, low: boolean): CanvasTexture {
+  // PIXEL CLOUDS (owner: "clouds should be pixels, not realistic clouds"): a 48×20 bitmap of overlapping discs in three
+  // flat tones — a one-texel lit crown along the top edge, the body, a dark belly on the lowest rows, the underside
+  // sheared flat — no gradient, no alpha but 0 or 1, and NEAREST magnification: on a puff 300 wide a texel is six
+  // units of sky. `low` makes the dark silhouette tier against the horizon glow.
+  const W = 48, H = 20;
   const c = document.createElement('canvas');
-  c.width = 160; c.height = 48;
+  c.width = W; c.height = H;
   const x = c.getContext('2d')!;
-  x.clearRect(0, 0, 160, 48);
-  const body = low ? 138 : 224, crown = low ? 190 : 255, belly = low ? 96 : 168; // the high tier bright: a cloud, not smoke
-  const grey = (v: number, a: number) => `rgba(${v},${v},${v},${a})`;
-  const blobs = 6 + Math.floor(rand() * 5);
+  x.clearRect(0, 0, W, H);
+  const crown = low ? '#9aa3b8' : '#ffffff', body = low ? '#6f7890' : '#e2e8f2', belly = low ? '#4a5268' : '#a9b4c9';
+  const mask = new Uint8Array(W * H);
+  const blobs = 5 + Math.floor(rand() * 4);
   for (let b = 0; b < blobs; b++) {
-    const bx = 18 + rand() * 124, by = 22 + (rand() - 0.5) * 12, rw = 14 + rand() * 24, rh = 6 + rand() * 9;
-    x.save();
-    x.translate(bx, by); x.scale(rw / rh, 1);
-    const g = x.createRadialGradient(0, -rh * 0.25, 0, 0, 0, rh);
-    g.addColorStop(0, grey(crown, 0.95));
-    g.addColorStop(0.55, grey(body, 0.85));
-    g.addColorStop(0.85, grey(belly, 0.5));
-    g.addColorStop(1, grey(belly, 0));
-    x.fillStyle = g;
-    x.beginPath(); x.arc(0, 0, rh, 0, Math.PI * 2); x.fill();
-    x.restore();
+    const cx = 8 + Math.floor(rand() * (W - 16)), cy = 9 + Math.floor((rand() - 0.5) * 6), r = 3 + Math.floor(rand() * 5);
+    for (let yy = -r; yy <= r; yy++) for (let xx = -r; xx <= r; xx++) {
+      if (xx * xx + yy * yy > r * r) continue;
+      const px = cx + xx, py = cy + yy;
+      if (px >= 0 && px < W && py >= 1 && py < H - 5) mask[py * W + px] = 1; // (the belly sheared flat five rows up)
+    }
   }
-  // a flat belly: the underside sheared off, a shade darker
-  x.globalCompositeOperation = 'destination-out';
-  x.fillStyle = '#000'; x.fillRect(0, 40, 160, 8);
-  x.globalCompositeOperation = 'source-atop';
-  x.fillStyle = grey(belly, 0.35); x.fillRect(0, 30, 160, 10);
-  x.globalCompositeOperation = 'source-over';
+  for (let py = 0; py < H; py++) for (let px = 0; px < W; px++) {
+    if (!mask[py * W + px]) continue;
+    const top = py === 0 || !mask[(py - 1) * W + px];
+    x.fillStyle = top ? crown : py >= H - 8 ? belly : body;
+    x.fillRect(px, py, 1, 1);
+  }
   const t = new CanvasTexture(c);
   t.colorSpace = SRGBColorSpace;
-  t.minFilter = LinearFilter; t.magFilter = LinearFilter; t.generateMipmaps = false; // soft, not blocky: a cloud
+  t.minFilter = NearestFilter; t.magFilter = NearestFilter; t.generateMipmaps = false; // pixels: a chunk of sky each
   return t;
 }
 
@@ -1353,7 +1353,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   const cloudTexHigh = [0, 1, 2, 3, 4].map(() => cloudTexture(rand, false)), cloudTexLow = [0, 1, 2].map(() => cloudTexture(rand, true));
   const cloudGeo = new PlaneGeometry(1, 1).rotateX(-Math.PI / 2); // flat: seen from below
   const cloudAt = (low: boolean) => {
-    const opacity = low ? 0.85 : 0.65 + rand() * 0.3;
+    const opacity = low ? 0.95 : 0.88 + rand() * 0.12; // (pixels: near solid)
     const m = new Mesh(cloudGeo, new MeshBasicMaterial({
       map: low ? cloudTexLow[Math.floor(rand() * cloudTexLow.length)] : cloudTexHigh[Math.floor(rand() * cloudTexHigh.length)],
       transparent: true, opacity, fog: false, depthWrite: false, side: DoubleSide,
@@ -2966,7 +2966,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
         const arms = new Set<number>();
         for (const p of n.ports) if (p.link.street === st) arms.add(p.end === 0 ? 1 : -1);
         const ext = (d: number) => (arms.has(d) ? armR : thruR);
-        const boxExt = (d: number) => (arms.has(d) ? armR + 2.4 : thruR);
+        const boxExt = (d: number) => (arms.has(d) ? armR + 1.0 : thruR); // (the vehicles stop at KERB past the pavement reach — armR is that plus 1.5 — so the paint stays inside it)
         const half = carHalf(st), yaw = Math.atan2(-st.dz, st.dx);
         if (st.kind === 'lane' && !others.every((o) => o.kind === 'lane')) { // a lane at a road: its strip ends at the kerb; a give-way line at its mouth
           for (const d of arms) {
@@ -2984,8 +2984,8 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
         for (const d of arms) {
           const reach = ext(d);
           dummy.rotation.set(0, yaw + Math.PI / 2, 0);
-          dummy.position.set(n.x + st.dx * d * (reach + 0.2), 0.062, n.z + st.dz * d * (reach + 0.2)); dummy.scale.set(2 * half + 0.4, 1, 2.2); dummy.updateMatrix(); zebras.setMatrixAt(jz++, dummy.matrix);
-          dummy.position.set(n.x + st.dx * d * (reach + 1.8), 0.064, n.z + st.dz * d * (reach + 1.8)); dummy.scale.set(2 * half, 1, 0.4); dummy.updateMatrix(); stops.setMatrixAt(js++, dummy.matrix);
+          dummy.position.set(n.x + st.dx * d * (reach - 1.3), 0.062, n.z + st.dz * d * (reach - 1.3)); dummy.scale.set(2 * half + 0.4, 1, 2.2); dummy.updateMatrix(); zebras.setMatrixAt(jz++, dummy.matrix); // the zebra at the corner's line, where the walkers cross
+          dummy.position.set(n.x + st.dx * d * (reach + 0.5), 0.064, n.z + st.dz * d * (reach + 0.5)); dummy.scale.set(2 * half, 1, 0.4); dummy.updateMatrix(); stops.setMatrixAt(js++, dummy.matrix); // the stop line just past where the vehicles stop
         }
       });
       if (mouths.length >= 3) {
@@ -3017,17 +3017,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   // -- PEOPLE (owner: NPCs interacting, going about their business): pixel
   // sprites with lives (city-people.ts) — walking, stopping, talking in
   // knots, browsing and vending at the markets, crossing on the red, sitting ----
-  const zones: Zone[] = [];
-  for (const st of plan.stalls) {
-    let z = zones.find((zn) => Math.abs(zn.x - st.x) < 30 && Math.abs(zn.z - st.z) < 30);
-    if (!z) { z = { x: st.x, z: st.z, w: 6, d: 6, stalls: [] }; zones.push(z); }
-    z.stalls.push(st);
-  }
-  for (const z of zones) {
-    const xs = z.stalls.map((q) => q.x), zs = z.stalls.map((q) => q.z);
-    const x0 = Math.min(...xs) - 3, x1 = Math.max(...xs) + 3, z0 = Math.min(...zs) - 3, z1 = Math.max(...zs) + 3;
-    z.x = (x0 + x1) / 2; z.z = (z0 + z1) / 2; z.w = x1 - x0; z.d = z1 - z0;
-  }
+  const zones: Zone[] = marketZones(plan.stalls, plan.streets); // (owner: a zone that straddled the arterial put its crowd among the buses)
   const nodeAt = new Map<string, (typeof traffic.nodes)[number]>();
   for (const n of traffic.nodes) nodeAt.set(`${Math.round(n.x)}:${Math.round(n.z)}`, n);
   const crossOK = (x: number, z: number, axis: 'x' | 'z' | 'd'): boolean => {
@@ -3040,10 +3030,10 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   for (let i = -HALF - OUTER - 1; i <= HALF + OUTER; i++) crossNodes.push(streetAt(i));
   // the two sims speak: the walkers ask whether a crosswalk is clear of vehicles and where the walls are; the traffic
   // asks who is in its crosswalks (owner: pedestrians clipped through vehicles, vehicles drove through pedestrians)
-  // the plaza's crowd (about the statue, which they browse like a stall), the stages' crowds, the rooftop parties
+  // the plaza's crowd (about the statue, which they browse like a stall), the stages' crowds (owner: no crowd on a roof —
+  // the rooftop parties keep their lights and lose their people)
   zones.push({ x: 0, z: 0, w: 22, d: 22, stalls: [{ x: 0, z: 0, color: '#ffffff' }] });
   for (const st of plan.stages) zones.push({ x: st.x + Math.sign(st.x) * (st.w / 2 + 6.5), z: st.z, w: 9, d: 16, stalls: [] });
-  for (const pt of plan.parties) zones.push({ x: pt.x, y: pt.y, z: pt.z, w: pt.w, d: pt.d, stalls: [] });
   for (const pz of plan.plazas) zones.push({ x: pz.x, z: pz.z, w: pz.w, d: pz.d, stalls: [] }); // the stadium's forecourt, the wheel's queue
   const walkOK = (x: number, z: number, axis: 'x' | 'z' | 'd', frames: number) => { // the pedestrian signal for crossing the street along axis at the node
     const n = nodeAt.get(`${Math.round(x)}:${Math.round(z)}`);
@@ -3053,6 +3043,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   };
   const people = new People(plan.streets, zones, plan.stalls, mulberry32(seed ^ 0x7e0b1e), calm ? 1400 : isMobile() ? 1500 : 3800, crossOK, crossNodes, { // (owner: a city crowded with pedestrians)
     solid: (x, y, z) => plan.grid.hit(x, y, z, 0.3) !== null,
+    onRoad: (x, z) => carriagewayAt(plan.streets, x, z) !== null,
     roadClear: (x, z) => traffic.clearAt(x, z),
     walkOK,
     doors: plan.doors,

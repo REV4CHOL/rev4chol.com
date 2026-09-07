@@ -46,7 +46,7 @@ describe('Traffic', () => {
           const t = lane.t0 + lane.dir * lane.len;
           const d = Math.hypot(st.x0 + st.dx * t - n.x, st.z0 + st.dz * t - n.z);
           if (st.kind === 'road') expect(d, 'a road lane stops before the arterial\'s pavement').toBeGreaterThanOrEqual(ARTERIAL_ROW + 1.4);
-          else expect(d, 'an arterial lane stops before the road\'s kerb').toBeLessThanOrEqual(9.6);
+          else expect(d, 'an arterial lane stops before the road\'s kerb').toBeLessThanOrEqual(10.0); // (the road's corner lies 8.3 along the skewed arterial, plus the kerb's 1.5)
         }
       }
     }
@@ -59,7 +59,8 @@ describe('Traffic', () => {
     for (const n of traffic.nodes.filter((n) => n.signal).slice(0, 60)) {
       const { green, phase } = n.signal!;
       expect(green).toBeGreaterThanOrEqual(GREEN); expect(phase).toBeGreaterThanOrEqual(PHASE); expect(phase - green).toBeGreaterThanOrEqual(PHASE - GREEN);
-      if (phase > PHASE) { scaled += 1; expect(n.streets.some((s) => s.kind === 'arterial')).toBe(true); } // only the arterial's crossings run a longer cycle
+      const oblique = n.streets.some((a, ia) => n.streets.some((b, ib) => { const sn = Math.abs(a.dx * b.dz - a.dz * b.dx); return ib > ia && sn < 0.9 && sn > 0.35; }));
+      if (phase > PHASE) { scaled += 1; expect(n.streets.some((s) => s.kind === 'arterial') || oblique, 'a longer cycle only where the boxes are longer').toBe(true); } // the arterial's crossings and the boulevard's: their boxes reach past the other right of way, angle-aware
       const cycle = n.streets.length * phase;
       const per = new Array(n.streets.length).fill(0);
       for (let t = 0; t < cycle; t++) {
@@ -171,7 +172,7 @@ describe('Traffic', () => {
     }
     const tee = traffic.nodes.find((n) => !n.signal && n.streets.length === 2)!;
     expect(traffic.walk(tee, 0, 300)).toBe('unlit');
-  });
+  }, 30000); // (the boulevard's crossings run longer cycles now)
 
   it('holds a lane at the line while someone is in its crosswalk', () => {
     const t = new Traffic(plan.streets, mulberry32(7));

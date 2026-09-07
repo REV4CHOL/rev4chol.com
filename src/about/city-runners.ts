@@ -180,7 +180,7 @@ export class Runners {
         case 'land': { // a roll, then on
           r.frame = ((this.tick + r.phase) >> 2) & 1 ? RUN_FRAME.walkA : RUN_FRAME.stand;
           r.y = r.roof.top;
-          if (--r.timer <= 0) { if (r0() < 0.5) this.choose(r); else { r.act = 'dance'; r.timer = 120 + r0() * 400; } }
+          if (--r.timer <= 0) { if (r0() < 0.8) this.choose(r); else { r.act = 'dance'; r.timer = 40 + r0() * 160; } } // (owner: no idle crowds on the roofs — mostly on, a short dance now and then)
           break;
         }
       }
@@ -191,9 +191,12 @@ export class Runners {
    *  take-off point. */
   private choose(r: Runner): void {
     const a = this.rand();
-    const kind: 'leap' | 'thrust' | 'rocket' | null = a < 0.5 ? 'leap' : a < 0.78 ? 'thrust' : a < 0.86 ? 'rocket' : null;
-    const flight = kind ? this.plan(r, kind) : null;
-    if (flight && kind) {
+    // the kinds in the order they are tried: a leap first, most often; a hop; now and then a rocket; the next kind when
+    // one cannot be planned from this roof (a runner used to dance whenever its first choice found no roof)
+    const order: ('leap' | 'thrust' | 'rocket')[] = a < 0.5 ? ['leap', 'thrust'] : a < 0.8 ? ['thrust', 'leap'] : a < 0.9 ? ['rocket', 'thrust', 'leap'] : [];
+    for (const kind of order) {
+      const flight = this.plan(r, kind);
+      if (!flight) continue;
       r.to = flight.to; r.from = flight.from; r.dest = flight.dest; r.lift = flight.lift;
       const dist = Math.hypot(flight.dest[0] - flight.from[0], flight.dest[2] - flight.from[2]);
       r.T = Math.max(kind === 'leap' ? 26 : kind === 'thrust' ? 60 : 200, Math.round(dist / (kind === 'leap' ? 0.17 : kind === 'thrust' ? 0.3 : 0.75)));
@@ -203,13 +206,13 @@ export class Runners {
       (r as Runner & { next?: 'leap' | 'thrust' | 'rocket' }).next = kind;
       return;
     }
-    if (this.rand() < 0.6) { const spot = this.spotOn(r.roof); r.tx = spot[0]; r.tz = spot[1]; r.act = 'run'; (r as Runner & { next?: null }).next = null; }
-    else { r.act = 'dance'; r.timer = 120 + this.rand() * 400; }
+    if (this.rand() < 0.75) { const spot = this.spotOn(r.roof); r.tx = spot[0]; r.tz = spot[1]; r.act = 'run'; (r as Runner & { next?: null }).next = null; }
+    else { r.act = 'dance'; r.timer = 40 + this.rand() * 160; }
   }
   /** Arrived at the spot: take off if a flight was planned, else dance. */
   private arrive(r: Runner): void {
     const next = (r as Runner & { next?: 'leap' | 'thrust' | 'rocket' | null }).next;
     if (next && r.to) { r.act = next; r.t = 0; if (next !== 'leap') { r.flights += 1; if (next === 'rocket') this.rockets += 1; } return; }
-    r.act = 'dance'; r.timer = 120 + this.rand() * 400;
+    r.act = 'dance'; r.timer = 40 + this.rand() * 160;
   }
 }

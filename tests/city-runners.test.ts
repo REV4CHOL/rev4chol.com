@@ -50,6 +50,7 @@ describe('Runners', () => {
     expect(perFrame).toBeLessThan(2);
     for (const r of sim.runners) expect(Number.isFinite(r.x + r.y + r.z)).toBe(true);
     expect(sim.runners.filter((r) => r.act === 'thrust' || r.act === 'rocket' || r.act === 'leap').length).toBeGreaterThan(5); // a crowd in the air at any moment
+    expect(sim.runners.filter((r) => r.act !== 'dance').length, 'most of them on the move (owner: no idle crowds on the roofs)').toBeGreaterThan(120);
   });
 
   it('is deterministic for a seed', () => {

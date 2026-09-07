@@ -254,7 +254,15 @@ export class Traffic {
     // yield by gap), their cycle scaled to the box's reach
     // (a lane's mouth on a road is no box for the road: its traffic runs on — the turner from the lane waits for its gap
     // and whoever follows holds while the turn is in progress — else every mouth was a box to clear, and the roads crawled)
-    const boxFor = (n: Node, st: Street) => KERB + n.streets.reduce((m, s) => (s === st ? m : Math.max(m, st.kind === 'ramp' && s.kind === 'arterial' ? s.width / 2 : s.kind === 'lane' && st.kind !== 'lane' ? 0.4 : rowOf(s))), n.streets.length > 1 ? 0 : rowOf(st));
+    // (the reach along this street of every other's right of way — angle-aware, the paint's reachAlong: at a six-way a
+    // road's lanes used to stop inside the boulevard's carriageway)
+    const boxFor = (n: Node, st: Street) => {
+      if (n.streets.length <= 1) return KERB + rowOf(st);
+      const others = n.streets.filter((s) => s !== st);
+      const mouths = others.filter((s) => s.kind === 'lane' && st.kind !== 'lane'); // a lane's mouth on a road: no box for the road
+      const rest = others.filter((s) => !(s.kind === 'lane' && st.kind !== 'lane'));
+      return KERB + Math.max(mouths.length ? 0.4 : 0, reachAlong(st, rest, true));
+    };
     for (const n of this.nodes) {
       n.box = n.streets.reduce((m, s) => Math.max(m, rowOf(s)), 0) + KERB;
       // lights only where two streets CROSS; a T-junction runs on priority — the through road flows, the ending

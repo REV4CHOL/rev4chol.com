@@ -55,6 +55,30 @@ describe("the junctions' paint (owner: zebras painted over each other at the six
     }
   });
 
+  it('stops the vehicles before every other right of way, angle-aware: at the oblique nodes no lane ends inside another carriageway', () => {
+    const junctions = traffic.nodes.filter((n) => n.streets.length >= 2 && Math.abs(n.y) < 1 && !n.streets.some((q) => q.kind === 'highway'));
+    let obliqueEnds = 0;
+    for (const n of junctions) {
+      const oblique = n.streets.some((a, ia) => n.streets.some((b, ib) => { const s = Math.abs(a.dx * b.dz - a.dz * b.dx); return ib > ia && s < 0.9 && s > 0.35; }));
+      if (!oblique) continue;
+      for (const p of n.ports) {
+        const st = p.link.street;
+        for (const lane of p.link.lanes.flat()) {
+          if (lane.end !== n) continue;
+          const t = lane.t0 + lane.dir * lane.len;
+          const x = st.x0 + st.dx * t - st.dz * lane.offset * lane.dir, z = st.z0 + st.dz * t + st.dx * lane.offset * lane.dir;
+          for (const o of n.streets) {
+            if (o === st) continue;
+            const to = (x - o.x0) * o.dx + (z - o.z0) * o.dz, lat = Math.abs((x - o.x0) * -o.dz + (z - o.z0) * o.dx);
+            expect(to > 0 && to < o.len && lat < carHalf(o) - 0.05, `a ${st.kind} lane ends inside the ${o.kind}'s carriageway at ${x.toFixed(0)},${z.toFixed(0)}`).toBe(false);
+          }
+          obliqueEnds += 1;
+        }
+      }
+    }
+    expect(obliqueEnds).toBeGreaterThan(10);
+  });
+
   it("hulls a junction's mouths", () => {
     const h = convexHull([[0, 0], [4, 0], [4, 4], [0, 4], [2, 2], [1, 3]]);
     expect(h.length).toBe(4);
