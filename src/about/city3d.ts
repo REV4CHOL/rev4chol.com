@@ -30,7 +30,7 @@ import {
   AdditiveBlending, BackSide, BoxGeometry, BufferAttribute, BufferGeometry, CanvasTexture, CatmullRomCurve3, CircleGeometry, ClampToEdgeWrapping, Color, ConeGeometry, DataTexture,
   CylinderGeometry, DirectionalLight, DoubleSide, FogExp2, Group, HemisphereLight, InstancedBufferAttribute,
   InstancedBufferGeometry, InstancedMesh, LinearFilter, LinearMipmapLinearFilter, LineBasicMaterial, LineSegments, Material, Matrix4, Mesh, MeshBasicMaterial,
-  MeshLambertMaterial, MeshStandardMaterial, NearestFilter, NeutralToneMapping, NoColorSpace, Object3D, PCFSoftShadowMap, PerspectiveCamera, PlaneGeometry, PMREMGenerator, PointLight, Points,
+  MeshLambertMaterial, MeshStandardMaterial, NearestFilter, NeutralToneMapping, NoColorSpace, Object3D, PCFSoftShadowMap, PerspectiveCamera, PlaneGeometry, PMREMGenerator, PointLight, Points, Shape, ShapeGeometry,
   PointsMaterial, RepeatWrapping, RGBAFormat, RingGeometry, Scene, ShaderChunk, SphereGeometry, Sprite, SpriteMaterial,
   SRGBColorSpace, TorusGeometry, Vector2, Vector3, WebGLRenderer,
 } from 'three';
@@ -50,7 +50,7 @@ import { CityAudio } from './city-audio';
 import { CAST, People, Zone } from './city-people';
 import { Runners } from './city-runners';
 import { blendLooks, ease, lerpHex, Look as SkyLook, LOOKS as SKY, paintSky, TimeOfDay } from './city-sky';
-import { Traffic, DECK_KERB, SPEC } from './city-traffic';
+import { armReach, convexHull, DECK_KERB, SPEC, throughReach, Traffic } from './city-traffic';
 import { ATLAS, CELLS, FAMILIES, FLOOR, heightToNormal, PX as SKIN_PX, SHOP, skinFor, tintJitter, UPPER, VARIANTS } from './city-skins';
 
 /** THE FOG, rewritten for every material at once: three's exponential
@@ -1342,22 +1342,33 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   const sun = new Sprite(new SpriteMaterial({ map: glowTexture('#ffffff', true), transparent: true, opacity: 0, fog: false, depthWrite: false }));
   sky.add(sun);
   const sunMat = sun.material as SpriteMaterial;
-  const clouds: Sprite[] = [];
+  // -- CLOUDS (owner: numerous, higher up, FIXED — not moving with the cursor or the altitude): world objects, not
+  // riders of the camera-borne dome — two hundred and forty flat puffs over a field 2600 across at 300–560 (the dark tier at
+  // 260–340), each its own size and turn, tinted by the look, never drifting; each fades out between 1100 and 1400 from
+  // the eye, well before the far plane (1500), so none pops. (The dome writes no depth and draws first: a cloud past
+  // its radius still shows.)
+  const clouds: Mesh[] = [];
   const lowCloud: boolean[] = [];
+  const cloudBase: number[] = []; // each cloud's own opacity
+  const cloudTexHigh = [0, 1, 2, 3, 4].map(() => cloudTexture(rand, false)), cloudTexLow = [0, 1, 2].map(() => cloudTexture(rand, true));
+  const cloudGeo = new PlaneGeometry(1, 1).rotateX(-Math.PI / 2); // flat: seen from below
   const cloudAt = (low: boolean) => {
-    const s = new Sprite(new SpriteMaterial({
-      map: cloudTexture(rand, low), transparent: true,
-      opacity: low ? 0.85 : 0.55 + rand() * 0.3, fog: false, depthWrite: false,
+    const opacity = low ? 0.85 : 0.65 + rand() * 0.3;
+    const m = new Mesh(cloudGeo, new MeshBasicMaterial({
+      map: low ? cloudTexLow[Math.floor(rand() * cloudTexLow.length)] : cloudTexHigh[Math.floor(rand() * cloudTexHigh.length)],
+      transparent: true, opacity, fog: false, depthWrite: false, side: DoubleSide,
     }));
-    const a = rand() < 0.7 ? rand() * Math.PI : rand() * Math.PI * 2;
-    const r = 380 + rand() * 200; // inside the dome (640): a cloud past it vanished behind the crossfading dome at every time change
-    s.position.set(Math.cos(a) * r, low ? 70 + rand() * 70 : 170 + rand() * 220, Math.sin(a) * r);
-    s.scale.set(low ? 300 + rand() * 200 : 190 + rand() * 160, low ? 42 + rand() * 20 : 58 + rand() * 30, 1);
-    clouds.push(s); lowCloud.push(low);
-    sky.add(s);
+    const a = rand() * Math.PI * 2, rr = 1300 * Math.sqrt(rand());
+    m.position.set(Math.cos(a) * rr, low ? 260 + rand() * 80 : 300 + rand() * 260, Math.sin(a) * rr);
+    const w = low ? 300 + rand() * 260 : 240 + rand() * 240;
+    m.scale.set(w, 1, w * (0.5 + rand() * 0.25));
+    m.rotation.y = rand() * Math.PI * 2;
+    m.frustumCulled = true;
+    clouds.push(m); lowCloud.push(low); cloudBase.push(opacity);
+    scene.add(m);
   };
-  for (let i = 0; i < 8; i++) cloudAt(false);
-  for (let i = 0; i < 7; i++) cloudAt(true); // dark slabs against the glow
+  for (let i = 0; i < 200; i++) cloudAt(false);
+  for (let i = 0; i < 40; i++) cloudAt(true); // dark slabs against the glow
 
   const horizonRing = new Group();
   scene.add(horizonRing);
@@ -2940,35 +2951,48 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     let jb = 0, jz = 0, js = 0;
     for (const n of junctions) {
       const allRoads = n.streets.every((q) => q.kind !== 'lane');
+      // an OBLIQUE node (the boulevard's crossings): one box for the whole junction, the convex hull of every mouth — a star
+      // of rectangles left pavement wedges inside the junction
+      const oblique = n.streets.some((a, ia) => n.streets.some((b, ib) => { const s = Math.abs(a.dx * b.dz - a.dz * b.dx); return ib > ia && s < 0.9 && s > 0.35; }));
+      const mouths: [number, number][] = [];
       n.streets.forEach((st, i) => {
         const others = n.streets.filter((o) => o !== st);
-        // (owner: a zebra painted across another street's carriageway — at a six-way the boulevard crosses the grid roads at
-        // 45°, so its carriageway reaches 1.4× its half-width along each road, and theirs along it)
-        const through = (o: Street) => 1 / Math.max(0.35, Math.abs(st.dx * o.dz - st.dz * o.dx));
-        const maxRow = others.reduce((m, o) => Math.max(m, rowOf(o), carHalf(o) * through(o) + 1.2), 0), maxCar = others.reduce((m, o) => Math.max(m, carHalf(o) * through(o)), 0);
+        // THE REACH (owner: no zebra across another street's carriageway): the exact extent of every other right of way along
+        // this arm (city-traffic's armReach) — the zebra sits past the corner at reach + 0.2, the stop line at reach + 1.8,
+        // the box runs on to reach + 2.4 so no dash and no centre line shows under them
+        const armR = armReach(st, others), thruR = throughReach(st, others);
         const arms = new Set<number>();
         for (const p of n.ports) if (p.link.street === st) arms.add(p.end === 0 ? 1 : -1);
-        const ext = (d: number) => (arms.has(d) ? maxRow + 1.5 : maxCar);
+        const ext = (d: number) => (arms.has(d) ? armR : thruR);
+        const boxExt = (d: number) => (arms.has(d) ? armR + 2.4 : thruR);
         const half = carHalf(st), yaw = Math.atan2(-st.dz, st.dx);
         if (st.kind === 'lane' && !others.every((o) => o.kind === 'lane')) { // a lane at a road: its strip ends at the kerb; a give-way line at its mouth
           for (const d of arms) {
             dummy.rotation.set(0, yaw + Math.PI / 2, 0);
-            dummy.position.set(n.x + st.dx * d * (maxCar + 0.5), 0.064, n.z + st.dz * d * (maxCar + 0.5)); dummy.scale.set(2 * half, 1, 0.4); dummy.updateMatrix(); stops.setMatrixAt(js++, dummy.matrix);
+            dummy.position.set(n.x + st.dx * d * (thruR + 0.5), 0.064, n.z + st.dz * d * (thruR + 0.5)); dummy.scale.set(2 * half, 1, 0.4); dummy.updateMatrix(); stops.setMatrixAt(js++, dummy.matrix);
           }
           return;
         }
         if (!(st.kind !== 'lane' && others.every((o) => o.kind === 'lane'))) { // (a road among lanes runs through unbroken)
-          const e0 = ext(-1), e1 = ext(1);
-          dummy.rotation.set(0, yaw, 0); dummy.position.set(n.x + st.dx * (e1 - e0) / 2, 0.052 + 0.002 * i, n.z + st.dz * (e1 - e0) / 2); dummy.scale.set(e0 + e1, 1, 2 * half); dummy.updateMatrix(); boxes.setMatrixAt(jb++, dummy.matrix);
+          const e0 = boxExt(-1), e1 = boxExt(1);
+          if (oblique) { for (const [d, e] of [[-1, e0], [1, e1]] as [number, number][]) for (const s of [-1, 1]) mouths.push([n.x + st.dx * d * e - st.dz * s * half, n.z + st.dz * d * e + st.dx * s * half]); }
+          else { dummy.rotation.set(0, yaw, 0); dummy.position.set(n.x + st.dx * (e1 - e0) / 2, 0.052 + 0.002 * i, n.z + st.dz * (e1 - e0) / 2); dummy.scale.set(e0 + e1, 1, 2 * half); dummy.updateMatrix(); boxes.setMatrixAt(jb++, dummy.matrix); }
         }
         if (!allRoads) return;
         for (const d of arms) {
           const reach = ext(d);
           dummy.rotation.set(0, yaw + Math.PI / 2, 0);
-          dummy.position.set(n.x + st.dx * d * (reach - 1.3), 0.062, n.z + st.dz * d * (reach - 1.3)); dummy.scale.set(2 * half + 0.4, 1, 2.2); dummy.updateMatrix(); zebras.setMatrixAt(jz++, dummy.matrix);
-          dummy.position.set(n.x + st.dx * d * (reach + 0.5), 0.064, n.z + st.dz * d * (reach + 0.5)); dummy.scale.set(2 * half, 1, 0.4); dummy.updateMatrix(); stops.setMatrixAt(js++, dummy.matrix);
+          dummy.position.set(n.x + st.dx * d * (reach + 0.2), 0.062, n.z + st.dz * d * (reach + 0.2)); dummy.scale.set(2 * half + 0.4, 1, 2.2); dummy.updateMatrix(); zebras.setMatrixAt(jz++, dummy.matrix);
+          dummy.position.set(n.x + st.dx * d * (reach + 1.8), 0.064, n.z + st.dz * d * (reach + 1.8)); dummy.scale.set(2 * half, 1, 0.4); dummy.updateMatrix(); stops.setMatrixAt(js++, dummy.matrix);
         }
       });
+      if (mouths.length >= 3) {
+        const hull = convexHull(mouths);
+        const shape = new Shape(hull.map(([x, z]) => new Vector2(x, -z)));
+        const m = new Mesh(new ShapeGeometry(shape).rotateX(-Math.PI / 2), boxMat);
+        m.position.y = 0.052; m.receiveShadow = true;
+        scene.add(m);
+      }
     }
     boxes.count = jb; zebras.count = jz; stops.count = js;
     dummy.rotation.set(0, 0, 0);
@@ -3785,7 +3809,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     sunMat.opacity = L.sun.opacity; sunMat.color.set(L.sun.color);
     sun.scale.set(L.sun.size, L.sun.size, 1);
     sun.position.copy(keyDir).multiplyScalar(600);
-    clouds.forEach((c, i) => (c.material as SpriteMaterial).color.set(lowCloud[i] ? L.clouds.low : L.clouds.high));
+    clouds.forEach((c, i) => (c.material as MeshBasicMaterial).color.set(lowCloud[i] ? L.clouds.low : L.clouds.high));
     waterMat.color.set(L.water);
     horizonMat.opacity = L.horizon;
     peopleMat.color.setScalar(L.people);
@@ -3849,9 +3873,12 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     for (let i = 0; i < beacons.length; i++) {
       (beacons[i].material as SpriteMaterial).opacity = ((tick >> 4) + i) % 2 ? 0.95 : 0.12;
     }
-    for (let i = 0; i < clouds.length; i++) {
-      clouds[i].position.x += 0.014 * ((i % 3) + 1);
-      if (clouds[i].position.x > 820) clouds[i].position.x = -820;
+    for (let i = 0; i < clouds.length; i++) { // the clouds HOLD; each fades before the far plane
+      const c = clouds[i];
+      const d = c.position.distanceTo(camera.position);
+      const f = d < 1100 ? 1 : d > 1400 ? 0 : (1400 - d) / 300;
+      c.visible = f > 0.02;
+      if (c.visible) (c.material as MeshBasicMaterial).opacity = cloudBase[i] * f;
     }
     if (tick % 6 === 0) {
       for (const s of screens) { paintScreen(s.ctx, rand); s.tex.needsUpdate = true; }

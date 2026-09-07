@@ -23,7 +23,7 @@
  *  about to enter — so a queue settles bumper to bumper and never overlaps
  *  (the cap converges on the gap from above). Pure: no DOM, no renderer;
  *  tested. */
-import { ARTERIAL_ROW, rampProfile, Street } from './city-plan';
+import { ARTERIAL_ROW, LANE_CAR, RAMP_W, rampProfile, ROAD, Street } from './city-plan';
 
 export type VKind = 'car' | 'taxi' | 'bus' | 'truck' | 'moto';
 /** The highway's parapets stand from here out to the deck's edge (7): no
@@ -104,6 +104,41 @@ export function streetPoint(st: Street, t: number, o: number, out: { x: number; 
 }
 /** Half a street's right of way: what another street's lanes stop short of at a node it shares with it. */
 const rowOf = (st: Street): number => (st.kind === 'arterial' ? ARTERIAL_ROW : st.width / 2);
+/** A street's half-ROW: its carriageway and its pavement, to the building line. */
+export const rowHalf = rowOf;
+/** A street's half-CARRIAGEWAY: the paint's edge (the pavement lies beyond, to rowHalf). */
+export const carHalf = (st: Street): number => (st.kind === 'diagonal' ? 4.9 : st.kind === 'arterial' ? st.width / 2 : st.kind === 'lane' ? LANE_CAR : st.kind === 'highway' ? 8 : st.kind === 'ramp' ? RAMP_W / 2 - 0.4 : ROAD / 2);
+/** THE REACH along an arm from its node (owner: at a six-way the boulevard's zebras were painted across the grid roads'
+ *  carriageways and theirs across its — a W of white bars): for every other street, the extent along this arm of its
+ *  right of way — its half-row (to the pavement's edge) or its half-carriageway, plus this arm's half-carriageway over
+ *  the crossing angle's cosine, all over its sine (floored at 0.35; a near-collinear pair, under 0.2, is the same line
+ *  and counts nothing). A right angle gives the other's half-row, as before. */
+export function reachAlong(st: Street, others: Street[], toPavement: boolean): number {
+  let reach = 0;
+  for (const o of others) {
+    const sinRaw = Math.abs(st.dx * o.dz - st.dz * o.dx);
+    if (sinRaw < 0.2) continue;
+    const sin = Math.max(0.35, sinRaw), cos = Math.abs(st.dx * o.dx + st.dz * o.dz);
+    reach = Math.max(reach, ((toPavement ? rowOf(o) : carHalf(o)) + carHalf(st) * cos) / sin);
+  }
+  return reach;
+}
+/** The arm's paint — its zebra's near edge — sits this far out: the pavement reach and a step past the corner. */
+export const armReach = (st: Street, others: Street[]): number => reachAlong(st, others, true) + 1.5;
+/** Where a street runs on through a node with no arm (a T's through side): its box ends at the others' carriageways. */
+export const throughReach = (st: Street, others: Street[]): number => reachAlong(st, others, false);
+/** The convex hull of some points (Andrew's chain), counter-clockwise, no repeats: one box for an oblique junction. */
+export function convexHull(pts: [number, number][]): [number, number][] {
+  const p = [...pts].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  if (p.length < 3) return p;
+  const cross = (o: [number, number], a: [number, number], b: [number, number]) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lower: [number, number][] = [];
+  for (const q of p) { while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], q) <= 0) lower.pop(); lower.push(q); }
+  const upper: [number, number][] = [];
+  for (let i = p.length - 1; i >= 0; i--) { const q = p[i]; while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], q) <= 0) upper.pop(); upper.push(q); }
+  lower.pop(); upper.pop();
+  return [...lower, ...upper];
+}
 
 function lanePoint(lane: Lane, s: number, out: { x: number; y: number; z: number }): void {
   streetPoint(lane.link.street, lane.t0 + lane.dir * s, lane.offset * lane.dir, out);
