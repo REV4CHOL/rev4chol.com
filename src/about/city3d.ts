@@ -30,7 +30,7 @@ import {
   AdditiveBlending, BackSide, BoxGeometry, BufferAttribute, BufferGeometry, CanvasTexture, CatmullRomCurve3, CircleGeometry, ClampToEdgeWrapping, Color, ConeGeometry, DataTexture,
   CylinderGeometry, DirectionalLight, DoubleSide, FogExp2, Group, HemisphereLight, InstancedBufferAttribute,
   InstancedBufferGeometry, InstancedMesh, LinearFilter, LinearMipmapLinearFilter, LineBasicMaterial, LineSegments, Material, Matrix4, Mesh, MeshBasicMaterial,
-  MeshLambertMaterial, MeshStandardMaterial, NearestFilter, NeutralToneMapping, NoColorSpace, Object3D, PCFShadowMap, PerspectiveCamera, PlaneGeometry, PMREMGenerator, PointLight, Points,
+  MeshLambertMaterial, MeshStandardMaterial, NearestFilter, NeutralToneMapping, NoColorSpace, Object3D, PCFSoftShadowMap, PerspectiveCamera, PlaneGeometry, PMREMGenerator, PointLight, Points,
   PointsMaterial, RepeatWrapping, RGBAFormat, RingGeometry, Scene, ShaderChunk, SphereGeometry, Sprite, SpriteMaterial,
   SRGBColorSpace, TorusGeometry, Vector2, Vector3, WebGLRenderer,
 } from 'three';
@@ -45,7 +45,7 @@ import {
   AirLane, ART_COLOR, ARTERIAL, ARTERIAL_ROW, arterialLat, ARTS, AutoFlight, bandPoint, bandPositions, BOUND, CAM_R, CANAL, DIAGONAL, EXT, G, HALF, HIGHWAY, HoloKind, LANE_CAR, LANE_W, OUTER,
   planCity, Poi, RAIL, RAMP_W, rampY, ROAD, Sign, signColor, Solid, starPositions, streetAt, STREET, Street, tourRoute,
 } from './city-plan';
-import { fov24, LensPass, lensTarget, MotionBlurPass } from './city-post';
+import { fov24, LensPass, lensTarget } from './city-post';
 import { CityAudio } from './city-audio';
 import { CAST, People, Zone } from './city-people';
 import { blendLooks, ease, lerpHex, Look as SkyLook, LOOKS as SKY, paintSky, TimeOfDay } from './city-sky';
@@ -167,8 +167,10 @@ const windowColor = (rand: () => number, warm = 0.6) => (rand() < 0.06 ? pick(ra
  *  gamma-lifts the night into a grey wash (measured). */
 function asPixelTex(t: CanvasTexture): CanvasTexture {
   t.colorSpace = SRGBColorSpace;
-  t.magFilter = NearestFilter; // crisp up close
-  t.minFilter = LinearMipmapLinearFilter; t.generateMipmaps = true; t.anisotropy = 4; // averaged into the distance: no shimmer (owner: textures glitched and jittered)
+  // (owner, three times over: the windows and the roads jittered — a NEAREST texel a pixel across flips as the eye moves;
+  // linear magnification holds it still, mipmaps and anisotropy average it into the distance)
+  t.magFilter = LinearFilter;
+  t.minFilter = LinearMipmapLinearFilter; t.generateMipmaps = true; t.anisotropy = 8;
   return t;
 }
 
@@ -296,7 +298,7 @@ function skinAtlas(rand: () => number): SkinAtlas {
   }
   x.globalAlpha = 1;
   const map = asPixelTex(new CanvasTexture(c));
-  map.minFilter = LinearMipmapLinearFilter; map.generateMipmaps = true; map.anisotropy = 4; // crisp up close (nearest), averaged into the distance: no shimmer
+  map.minFilter = LinearMipmapLinearFilter; map.generateMipmaps = true; map.anisotropy = 8; // averaged into the distance: no shimmer
   const n = document.createElement('canvas');
   n.width = W; n.height = H;
   const nx = n.getContext('2d')!;
@@ -305,7 +307,7 @@ function skinAtlas(rand: () => number): SkinAtlas {
   nx.putImageData(img, 0, 0);
   const normal = new CanvasTexture(n);
   normal.colorSpace = NoColorSpace;
-  normal.magFilter = NearestFilter; normal.minFilter = LinearMipmapLinearFilter; normal.generateMipmaps = true; normal.anisotropy = 4;
+  normal.magFilter = LinearFilter; normal.minFilter = LinearMipmapLinearFilter; normal.generateMipmaps = true; normal.anisotropy = 8; // (a nearest normal map lit the panes in facets that flickered)
   return { map, normal };
 }
 
@@ -603,7 +605,9 @@ function peopleTexture(): CanvasTexture {
       }
     }
   });
-  return asPixelTex(new CanvasTexture(c));
+  const t = asPixelTex(new CanvasTexture(c));
+  t.magFilter = NearestFilter; // the figures are eight texels wide: they stay crisp
+  return t;
 }
 
 /** The stadium's seats: blocks of the two clubs' colours around the tiers. */
@@ -968,8 +972,8 @@ function streetTex(c: HTMLCanvasElement, aniso: number): CanvasTexture {
   const t = new CanvasTexture(c);
   t.colorSpace = SRGBColorSpace;
   t.wrapS = t.wrapT = RepeatWrapping;
-  t.magFilter = NearestFilter; t.minFilter = LinearMipmapLinearFilter; t.generateMipmaps = true;
-  t.anisotropy = Math.min(8, aniso);
+  t.magFilter = LinearFilter; t.minFilter = LinearMipmapLinearFilter; t.generateMipmaps = true;
+  t.anisotropy = Math.min(16, aniso); // the strips lie at grazing angles: the paint needs every tap it can get
   return t;
 }
 
@@ -1078,7 +1082,7 @@ function stairsTexture(): CanvasTexture {
   }
   const t = new CanvasTexture(c);
   t.colorSpace = SRGBColorSpace;
-  t.magFilter = NearestFilter; t.minFilter = LinearMipmapLinearFilter;
+  t.magFilter = LinearFilter; t.minFilter = LinearMipmapLinearFilter;
   return t;
 }
 /** The plaza's paving: light stone flags with a radial pattern, seamed. */
@@ -1094,7 +1098,7 @@ function pavingTexture(aniso: number): CanvasTexture {
   x.globalAlpha = 1;
   const t = new CanvasTexture(c);
   t.colorSpace = SRGBColorSpace; t.wrapS = t.wrapT = RepeatWrapping; t.repeat.set(4, 4);
-  t.magFilter = NearestFilter; t.minFilter = LinearMipmapLinearFilter; t.anisotropy = Math.min(4, aniso);
+  t.magFilter = LinearFilter; t.minFilter = LinearMipmapLinearFilter; t.anisotropy = Math.min(4, aniso);
   return t;
 }
 /** A zebra crossing: white bars across u, clear between them. */
@@ -1107,7 +1111,7 @@ function zebraTexture(): CanvasTexture {
   for (let i = 4; i < 128; i += 12) x.fillRect(i, 1, 6, 14);
   const t = new CanvasTexture(c);
   t.colorSpace = SRGBColorSpace;
-  t.magFilter = NearestFilter; t.minFilter = LinearMipmapLinearFilter;
+  t.magFilter = LinearFilter; t.minFilter = LinearMipmapLinearFilter;
   return t;
 }
 
@@ -1169,6 +1173,9 @@ export interface CityRide {
   pose(): { x: number; y: number; z: number; yaw: number; pitch: number; mode: FlyMode; dir: number[] };
   /** The quality tier in force (far plane, fog, shadows, pixel size) — and a way to force one. */
   quality(): { tier: string; far: number; fog: number; shadows: boolean; pix: number };
+  /** The last frame's costs in ms, and a jitter probe: how much the frame's centre changes as the eye slides a hair. */
+  timings(): { traffic: number; people: number; rest: number; render: number };
+  shimmer(steps?: number, slide?: number): number;
   /** Verification: one frame rendered at a fixed size and read back as luma per pixel, row-major from the bottom
    *  (the pane may be hidden, which gives the canvas no size). */
   frame(w?: number, h?: number): number[];
@@ -1201,7 +1208,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   let starLevel = 1;
   let fogMul = 1;
   let tier = startTier();
-  const pixOf = (t: number) => (isMobile() ? 1 : TIERS[t].pix); // a phone's viewport is small: it renders at its own pixels
+  const pixOf = (t: number) => (isMobile() ? 2 : TIERS[t].pix); // a phone renders at half its pixels like a desktop (owner: the city froze on a phone — at its own pixels it pushed three times a desktop's through three passes)
   let PIX = pixOf(tier);
   const fog = new FogExp2('#0c1826', TIERS[tier].fog);
   scene.fog = fog;
@@ -1212,7 +1219,10 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   renderer.toneMapping = NeutralToneMapping; // a soft shoulder and NO toe: the shadows keep what light they have (owner: the city was in darkness)
   renderer.toneMappingExposure = 1.15;
   renderer.shadowMap.enabled = TIERS[tier].shadows;
-  renderer.shadowMap.type = PCFShadowMap;
+  // a lost context (a phone under memory pressure) is restored, at the lowest tier, instead of freezing the last frame
+  canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); }, false);
+  canvas.addEventListener('webglcontextrestored', () => { tier = 0; applyTier(); lastChange = performance.now() + 30000; render(); }, false);
+  renderer.shadowMap.type = PCFSoftShadowMap; // (soft edges do not crawl as the frustum steps)
   // CINEMATIC LIGHT (owner: contrast, shadow, highlights): a blue hemisphere
   // (sky above, the streets' sodium below) and the moon as a key light that
   // CASTS SHADOWS — its shadow camera rides with the eye. The facades keep
@@ -1248,10 +1258,8 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     moonLight.position.set(fx + keyDir.x * 340, keyDir.y * 340, fz + keyDir.z * 340);
   };
   const composer = new EffectComposer(renderer, lensTarget(2, 2));
-  const blur = new MotionBlurPass(camera, calm ? 0.35 : 0.6);
   const lens = new LensPass();
   composer.addPass(new RenderPass(scene, camera));
-  composer.addPass(blur);
   const bloom = new UnrealBloomPass(new Vector2(2, 2), 0.62, 0.42, 0.4);
   composer.addPass(bloom);
   composer.addPass(lens);
@@ -2559,7 +2567,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   // canal; pedestrians on the pavements and in the alleys; birds; aircraft ----
   const traffic = new Traffic(plan.streets, mulberry32(seed ^ 0x51f15e));
   const inCore = (x: number, z: number) => Math.abs(x) < EXT + G && Math.abs(z) < EXT + G;
-  traffic.populate(calm ? 800 : 1500, (lane) => {
+  traffic.populate(calm ? 800 : isMobile() ? 700 : 1500, (lane) => {
     const st = lane.link.street;
     const t = (lane.link.t0 + lane.link.t1) / 2;
     return lane.len * (inCore(st.x0 + st.dx * t, st.z0 + st.dz * t) ? 3 : 0.9) * (st.kind === 'highway' ? 2.2 : st.kind === 'arterial' ? 2.5 : 1);
@@ -2918,7 +2926,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     const st = axis === 'd' ? n.streets.find((q) => q.kind === 'diagonal') : n.streets.find((q) => q.kind !== 'diagonal' && (axis === 'x') === (q.dx !== 0));
     return st ? traffic.walk(n, Math.max(0, n.streets.indexOf(st)), frames) : 'unlit';
   };
-  const people = new People(plan.streets, zones, plan.stalls, mulberry32(seed ^ 0x7e0b1e), calm ? 1100 : 2200, crossOK, crossNodes, {
+  const people = new People(plan.streets, zones, plan.stalls, mulberry32(seed ^ 0x7e0b1e), calm ? 1100 : isMobile() ? 1200 : 2200, crossOK, crossNodes, {
     solid: (x, y, z) => plan.grid.hit(x, y, z, 0.3) !== null,
     roadClear: (x, z) => traffic.clearAt(x, z),
     walkOK,
@@ -3350,6 +3358,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     shadowPrimed = true;
   };
   const render = () => {
+    const tRender = performance.now();
     if (mode === 'free') {
       applyFree();
     } else if (mode === 'auto' && flight) {
@@ -3417,6 +3426,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     lastCam.copy(camera.position);
     primeShadows();
     composer.render();
+    timing.render = performance.now() - tRender;
   };
 
   // -- PRACTICALS (owner: brighter, but lit by practical lights): the lamps,
@@ -3636,15 +3646,23 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     camera.fov = fov24(camera.aspect); // a 24mm across the long edge
     camera.updateProjectionMatrix();
     lens.setAspect(camera.aspect);
-    blur.reset(); snapLights = true;
+     snapLights = true;
     render();
   };
 
   /** Everything that moves on its own: traffic, walkers, birds, signs,
    *  screens, holograms, smoke, the wheel, the water. */
+  /** The last frame's costs in ms (rvlRide.timings): the traffic's step, the people's, the rest of the world, the render. */
+  const timing = { traffic: 0, people: 0, rest: 0, render: 0 };
+  // the people step every other frame when a frame runs long (owner: the city froze on a phone) — the traffic keeps its
+  // pace, the people hold a frame
+  let peopleSlow = false, peopleCost = 0;
   const tickWorld = () => {
     tick += 1;
-    if (calm) return;
+    // CALM slows the city rather than stopping it (owner: "the whole city frozen" — calm had stilled every vehicle and
+    // walker): the flicker, the sweep, the twinkle and the breathing are stilled; the traffic, the people, the trains,
+    // the flyers and the boats go on
+    if (!calm) {
     winTime.value = tick / 60;
     sweep();
     (starsA.material as PointsMaterial).opacity = (0.7 + Math.sin(tick * 0.05) * 0.3) * starLevel;
@@ -3665,15 +3683,21 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     waterTex.offset.y = (waterTex.offset.y + 0.0015) % 1;
     (mirror.material as MeshBasicMaterial).opacity = 0.3 + Math.sin(tick * 0.03) * 0.06;
     craftMat.opacity = tick % 40 < 20 ? 1 : 0.15;
+    breathe();
+    }
+    let t0 = performance.now();
     driveCars();
     if (tick % 6 === 0) tendSignals();
+    timing.traffic = performance.now() - t0; t0 = performance.now();
     runTrains(); runCabs();
-    walkPeople();
+    if (!peopleSlow || tick % 2 === 0) { walkPeople(); peopleCost = performance.now() - t0; timing.people = peopleCost; } else timing.people = 0;
+    t0 = performance.now();
     fly();
     flyAir();
     playMatch();
     cruiseCraft();
-    breathe();
+    timing.rest = performance.now() - t0;
+    if (tick % 30 === 0) { const cost = timing.traffic + peopleCost; if (cost > 14) peopleSlow = true; else if (cost < 7) peopleSlow = false; }
   };
   driveCars(); runTrains(); runCabs(); walkPeople(); fly(); flyAir(); playMatch(); cruiseCraft(); breathe();
   fit();
@@ -3715,7 +3739,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
       }
     }
     tickWorld();
-    if (mode !== 'tour' || !calm || Math.abs(target - sm) > 0.0004) render();
+    if (mode !== 'tour' || !calm || tick % 2 === 0 || Math.abs(target - sm) > 0.0004) render(); // (calm: the tour at half rate, never still)
   };
   loop();
 
@@ -3743,7 +3767,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
         gaze.leg = -1; gaze.poi = null; gaze.held = 0;
       }
       mode = m;
-      blur.reset(); snapLights = true;
+      snapLights = true;
     },
     look: (dx, dy) => { free.lookX += dx; free.lookY += dy; }, // an impulse; the head carries it
     keys,
@@ -3754,7 +3778,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
       free.yaw = yaw;
       free.pitch = pitch;
       free.vel.set(0, 0, 0); free.yawV = 0; free.pitchV = 0; free.roll = 0; free.throttle = 0;
-      blur.reset(); snapLights = true;
+      snapLights = true;
       render();
     },
     tick: (n = 1) => { for (let i = 0; i < n; i++) { tickWorld(); render(); } },
@@ -3763,6 +3787,29 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
       return { x: camera.position.x, y: camera.position.y, z: camera.position.z, yaw: free.yaw, pitch: free.pitch, mode, dir: [fwd.x, fwd.y, fwd.z] };
     },
     quality: () => ({ tier: TIERS[tier].label, far: camera.far, fog: fog.density, shadows: renderer.shadowMap.enabled && moonLight.shadow.intensity > 0, pix: PIX }),
+    timings: () => ({ ...timing }),
+    shimmer: (steps = 6, slide = 0.04) => { // how much a patch at the frame's centre changes as the eye slides sideways a hair: a jitter metric (0 = stable)
+      const gl = renderer.getContext();
+      renderer.setSize(640, 360, false); composer.setSize(640, 360); // a fixed frame, whatever the pane's size (a hidden pane is 0 × 0)
+      camera.aspect = 640 / 360; camera.updateProjectionMatrix();
+      const W = 640, H = 360, w = 160, h = 90, x0 = (W - w) >> 1, y0 = (H - h) >> 1;
+      const a = new Uint8Array(w * h * 4), b = new Uint8Array(w * h * 4);
+      const grab = (buf: Uint8Array) => { render(); gl.readPixels(x0, y0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, buf); };
+      camera.getWorldDirection(fwd);
+      const rx = fwd.z, rz = -fwd.x; // the eye's right, on the ground
+      grab(a);
+      let sum = 0;
+      for (let i = 0; i < steps; i++) {
+        free.pos.x += rx * slide; free.pos.z += rz * slide;
+        grab(b);
+        let d = 0;
+        for (let k = 0; k < a.length; k += 4) d += Math.abs(a[k] - b[k]) + Math.abs(a[k + 1] - b[k + 1]) + Math.abs(a[k + 2] - b[k + 2]);
+        sum += d / (w * h * 3);
+        a.set(b);
+      }
+      fit(); // back to the pane's own size
+      return sum / steps;
+    },
     frame: (w = 240, h = 150) => {
       renderer.setSize(w, h, false); composer.setSize(w, h);
       camera.aspect = w / h; camera.fov = fov24(camera.aspect); camera.updateProjectionMatrix(); lens.setAspect(camera.aspect);

@@ -1,93 +1,26 @@
 /** THE LENS — the city is photographed, not rendered (owner decree: a 24mm
- *  wide-angle with real glass). Two passes on the half-res pixel buffer:
- *
- *  MotionBlurPass — camera motion blur by reprojection: every pixel's depth
- *  is unprojected to a world point, projected through LAST frame's camera,
- *  and the screen-space difference is the streak (8 taps, clamped). Nothing
- *  is streaked when the camera holds still; a warp resets the history so no
- *  ghost smears across a cut.
+ *  wide-angle with real glass). One pass on the half-res pixel buffer:
  *
  *  LensPass — barrel distortion (the centre magnified, the corners pinned so
  *  no black edges), lateral chromatic aberration (red and blue bend by
  *  different amounts, growing with radius), field softness toward the
- *  corners and a cos⁴-style optical vignette. */
-import {
-  DepthTexture, HalfFloatType, Matrix4, PerspectiveCamera, ShaderMaterial, Vector3, WebGLRenderTarget, WebGLRenderer,
-} from 'three';
+ *  corners and a cos⁴-style optical vignette, and the time of day's grade.
+ *
+ *  (A motion-blur pass once streaked the frame by reprojection while the
+ *  camera moved; the owner read it as a glow that followed the camera, and
+ *  it is gone.) */
+import { HalfFloatType, ShaderMaterial, Vector3, WebGLRenderTarget, WebGLRenderer } from 'three';
 import { FullScreenQuad, Pass } from 'three/addons/postprocessing/Pass.js';
 
-/** A composer target that keeps its depth — both composer buffers clone it. */
+/** A composer target in half floats (the bloom's headroom). */
 export function lensTarget(w: number, h: number): WebGLRenderTarget {
-  return new WebGLRenderTarget(w, h, { type: HalfFloatType, depthTexture: new DepthTexture(w, h) });
+  return new WebGLRenderTarget(w, h, { type: HalfFloatType });
 }
 
 const VERT = /* glsl */ `
   varying vec2 vUv;
   void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
 `;
-
-const BLUR_FRAG = /* glsl */ `
-  uniform sampler2D tDiffuse;
-  uniform sampler2D tDepth;
-  uniform mat4 invVP;
-  uniform mat4 prevVP;
-  uniform float strength;
-  uniform float maxLen;
-  varying vec2 vUv;
-  void main() {
-    float z = texture2D(tDepth, vUv).x;
-    vec4 ndc = vec4(vUv * 2.0 - 1.0, z * 2.0 - 1.0, 1.0);
-    vec4 wp = invVP * ndc; wp /= wp.w;
-    vec4 pp = prevVP * wp; pp /= pp.w;
-    vec2 vel = (vUv - (pp.xy * 0.5 + 0.5)) * strength;
-    float l = length(vel);
-    if (l > maxLen) vel *= maxLen / l;
-    vec4 col = vec4(0.0);
-    for (int i = 0; i < 8; i++) {
-      col += texture2D(tDiffuse, vUv + vel * (float(i) / 7.0 - 0.5));
-    }
-    gl_FragColor = col / 8.0;
-  }
-`;
-
-export class MotionBlurPass extends Pass {
-  private readonly quad: FullScreenQuad;
-  private readonly mat: ShaderMaterial;
-  private readonly prev = new Matrix4();
-  private readonly cur = new Matrix4();
-  private readonly inv = new Matrix4();
-  private primed = false;
-
-  constructor(private readonly camera: PerspectiveCamera, strength = 0.6) {
-    super();
-    this.mat = new ShaderMaterial({
-      uniforms: {
-        tDiffuse: { value: null }, tDepth: { value: null },
-        invVP: { value: this.inv }, prevVP: { value: this.prev },
-        strength: { value: strength }, maxLen: { value: 0.045 },
-      },
-      vertexShader: VERT, fragmentShader: BLUR_FRAG, depthTest: false, depthWrite: false,
-    });
-    this.quad = new FullScreenQuad(this.mat);
-  }
-
-  /** Forget the last frame — call across a cut (mode switch, warp). */
-  reset(): void { this.primed = false; }
-
-  render(renderer: WebGLRenderer, writeBuffer: WebGLRenderTarget, readBuffer: WebGLRenderTarget): void {
-    this.cur.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse);
-    if (!this.primed) { this.prev.copy(this.cur); this.primed = true; }
-    this.inv.copy(this.cur).invert();
-    this.mat.uniforms.tDiffuse.value = readBuffer.texture;
-    this.mat.uniforms.tDepth.value = readBuffer.depthTexture;
-    renderer.setRenderTarget(this.renderToScreen ? null : writeBuffer);
-    this.quad.render(renderer);
-    this.prev.copy(this.cur);
-  }
-
-  dispose(): void { this.mat.dispose(); this.quad.dispose(); }
-}
-
 const LENS_FRAG = /* glsl */ `
   uniform sampler2D tDiffuse;
   uniform float aspect;
