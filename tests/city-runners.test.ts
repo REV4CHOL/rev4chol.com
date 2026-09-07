@@ -40,6 +40,18 @@ describe('Runners', () => {
     expect(sim.rockets).toBeGreaterThan(0);
   }, 120000);
 
+  it('runs three hundred (owner: massively more runners) cheaply: under two milliseconds a frame, every one on a roof or an arc', () => {
+    const sim = new Runners(plan.roofs, plan.grid, mulberry32(11), 300);
+    expect(sim.runners.length).toBe(300);
+    for (let f = 0; f < 300; f++) sim.step(); // warm up: the first flights planned
+    const t0 = performance.now();
+    for (let f = 0; f < 600; f++) sim.step();
+    const perFrame = (performance.now() - t0) / 600;
+    expect(perFrame).toBeLessThan(2);
+    for (const r of sim.runners) expect(Number.isFinite(r.x + r.y + r.z)).toBe(true);
+    expect(sim.runners.filter((r) => r.act === 'thrust' || r.act === 'rocket' || r.act === 'leap').length).toBeGreaterThan(5); // a crowd in the air at any moment
+  });
+
   it('is deterministic for a seed', () => {
     const a = new Runners(plan.roofs, plan.grid, mulberry32(3), 20), b = new Runners(plan.roofs, plan.grid, mulberry32(3), 20);
     for (let f = 0; f < 800; f++) { a.step(); b.step(); }

@@ -3165,7 +3165,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   scene.add(peopleMesh);
   // PARKOUR (owner): sixty runners on the roofs (city-runners), drawn as the walkers are — hip-hop looks: a neon top,
   // dark trousers, a cap, a glow for the thrusters' flame — and their sparks as points
-  const runners = new Runners(plan.roofs, plan.grid, mulberry32(seed ^ 0x9a7c0a), calm ? 30 : isMobile() ? 34 : 60);
+  const runners = new Runners(plan.roofs, plan.grid, mulberry32(seed ^ 0x9a7c0a), calm ? 150 : isMobile() ? 120 : 300); // (owner: "massively increased number of parkour runners")
   const RUNNERS = runners.runners.length;
   const rPos = new Float32Array(RUNNERS * 3), rFrame = new Float32Array(RUNNERS), rYaw = new Float32Array(RUNNERS), rRow = new Float32Array(RUNNERS), rScale = new Float32Array(RUNNERS);
   const rTop = new Float32Array(RUNNERS * 3), rBot = new Float32Array(RUNNERS * 3), rHair = new Float32Array(RUNNERS * 3), rSkin = new Float32Array(RUNNERS * 3), rGlow = new Float32Array(RUNNERS * 3);

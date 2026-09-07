@@ -29,7 +29,7 @@ export const roofGap = (a: Roof, b: Roof): number => Math.max(Math.abs(b.x - a.x
 export class Runners {
   readonly runners: Runner[] = [];
   /** The thrusters' sparks: a ring of positions, colours and lives (the renderer draws them). */
-  readonly trail = { n: 1500, pos: new Float32Array(1500 * 3), col: new Float32Array(1500 * 3), vel: new Float32Array(1500 * 3), life: new Float32Array(1500), head: 0 };
+  readonly trail = { n: 6000, pos: new Float32Array(6000 * 3), col: new Float32Array(6000 * 3), vel: new Float32Array(6000 * 3), life: new Float32Array(6000), head: 0 }; // (three hundred runners: four times the sparks)
   tick = 0;
   rockets = 0;
   private readonly roofs: Roof[];
