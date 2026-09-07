@@ -62,3 +62,4 @@
 - [x] Task G — c6c4445 `feat(about): parkour everywhere` (the deck survey found nothing across it; the carriageway is asserted clear).
 - [x] Task H — this commit: the spec's as-built section, this status, the memory entry; deploy verified.
 - [x] Follow-up — cb4a226 `fix(about): no crowd where nobody would stand; pixel clouds` (market zones off the roads, knots and pauses off the crossings, no roof crowds, runners on the move, the stop line angle-aware, pixel clouds).
+- [x] Follow-up 2 — f5c4115  (the window glitch was the site's grain overlay; the phone's render scale from its pixel ratio, adaptive).

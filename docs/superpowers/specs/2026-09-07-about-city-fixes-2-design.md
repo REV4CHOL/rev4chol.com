@@ -166,3 +166,19 @@ Tests: zones never straddle a carriageway (every zone sampled 7 × 7); nobody mi
 vending stands on a road (alleys and the narrow lanes excepted — a knot at a lane's edge spills a step into it, Hanoi)
 or above the ground (catwalks excepted); at the oblique nodes no lane ends inside another carriageway; most of three
 hundred runners on the move. 213 tests across 24 files.
+
+## Follow-up 2 (2026-09-07, f5c4115): the window glitch was the film grain; a phone at its own pixels
+
+Owner sent a 4K video of the live site: every unlit pane crawling with static that changed frame to frame while the
+camera stood still. The atlas measures flat, the lens pass carries no grain, and at night the shadow map is off at every
+tier (an A/B in the pane showed the dots identical with and without it). The dots are the SITE'S FILM LAYERS: a 1:1
+noise tile re-dealt every frame and composited overlay over the whole page (hardest on mid-grey — the city's dark glass
+is mid-grey; the lit panes saturate, the walls are dark, so it read as a per-pane glitch), and the scanlines banding
+the panes over it. The about page now punches the layers' hole (the one the film player uses) over the whole viewport:
+the city is raw glass; the chrome keeps nothing it would miss.
+
+Mobile blur: the canvas was sized in CSS pixels over PIX with the device pixel ratio ignored — a ratio-3 phone rendered
+195 wide and stretched it sixfold. A phone renders at its CSS size × min(ratio, 2) / 1.6 (about a desktop's
+half-resolution pixel count), adapting to the frame (down a fifth while a render averages over 26 ms, back up under 14,
+floor 0.6× CSS); rvlRide.quality() reports the scale and the buffer. Measured in the pane at 375 × 812, ratio 2:
+469 × 1015, 8.5 ms a render.
