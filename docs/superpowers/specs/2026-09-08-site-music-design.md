@@ -53,3 +53,23 @@ its clicks, hovers, whooshes and zaps.
 yet starts at 0), a page that may play (seek to the saved time plus the clock, fade to the volume, the place saved on
 `timeupdate`), a cold load that waits for a gesture, WATCH's hold and the next page's exact resume, the MUS button's
 off / on and a hold lifted, leaving (saved, faded). A stand-in deck and stores; fake timers.
+
+## Follow-up: through the loading screens (owner: "music must continue to play even during loading screens")
+
+The gap was the navigation itself: the old document dies with its audio, and the new page only restarted the track
+once its module chunks had loaded and `startPage` ran — by then the boot screen was up, in silence, and the leaving
+page had faded the music out under the wipe as well. Three changes:
+
+- **The music boot in every page's `<head>`** (index, works, about, contact, project — never about-old): one inline
+  classic script right after the self-heal watchdog, before the title and before any chunk. It reads the last page's
+  place from `sessionStorage`, makes the `<audio>`, seeks it to where the track would be now (held: exactly there),
+  plays, ramps to the volume on `playing`, and hands the element to the module as `window.rvlMusicBoot` (it also
+  stamps `window.rvlMusicAt`, the millisecond it was audibly playing, for checks). The module's `Music.init` ADOPTS
+  that element: no second `src`, no second seek, only the listeners and the volume. `tests/music-boot.test.ts` keeps
+  the five copies identical and runs the snippet in a sandbox (the clock runs on, held holds, wrapped by the length,
+  off stays off, a fresh session starts at 0).
+- **No fade on leaving.** `music.leave()` only saves; the track plays to the page's last moment.
+- **The destination prefetched.** `leaveTo` and the swipe `fetch` the next page's HTML under the wipe, so the
+  navigation is served from the cache (Pages sends `max-age=600`) and the head boot runs within the first frames.
+
+What remains is the browser's own document swap, a few tens of milliseconds, plus the seek into the cached file.

@@ -165,7 +165,8 @@ export function armGlideNav(opts: GlideOptions): void {
     document.body.style.transform = `translateY(${dir > 0 ? '-108vh' : '108vh'})`;
     // the slide IS the page transition — navigate as it completes (a timeout,
     // not transitionend: throttled tabs must still leave)
-    music.leave(200);
+    music.leave();
+    void fetch(stop.href, { credentials: 'same-origin' }).catch(() => { /* a warm cache is a bonus */ });
     window.setTimeout(() => { location.href = stop.href; }, 250);
   };
 

@@ -56,15 +56,22 @@ export class Music {
    *  page ends here — the owner's "until moving to another section or page". */
   init(): void {
     const d = this.deck;
-    const saved = readSaved(this.session);
-    d.loop = true; d.preload = 'auto'; d.volume = 0;
-    d.addEventListener('loadedmetadata', () => { d.currentTime = resumeAt(saved, this.now(), d.duration); });
+    const adopted = !!d.src; // the page head's MUSIC BOOT made it: seeked to the last page's place and playing (or refused) before any chunk loaded
+    if (!adopted) {
+      const saved = readSaved(this.session);
+      d.loop = true; d.preload = 'auto'; d.volume = 0;
+      d.addEventListener('loadedmetadata', () => { d.currentTime = resumeAt(saved, this.now(), d.duration); });
+    }
     d.addEventListener('timeupdate', () => this.save());
     d.addEventListener('pause', () => this.save());
     d.addEventListener('playing', () => { const cbs = this.playingCbs; this.playingCbs = []; for (const cb of cbs) cb(); });
-    d.src = TRACK;
-    if (this.enabled) this.start();
+    if (!adopted) d.src = TRACK;
+    if (!this.enabled) return;
+    if (!d.paused) this.fade(VOLUME, 120); // adopted and on: to the volume (the boot ramps too; the same target)
+    else this.start(); // refused so far (no activation yet), or the module's own element
   }
+
+  time(): number { return this.deck.currentTime; }
 
   /** The track's place, for the next page: its time and the clock now (held: exactly there, no clock). */
   save(): void {
@@ -74,7 +81,7 @@ export class Music {
   /** Play, fading in; refused (a cold load, no activation yet) it waits for the page's next gesture. */
   private start(): void {
     const p = this.deck.play();
-    this.fade(VOLUME, 500);
+    this.fade(VOLUME, 300);
     if (p && typeof p.catch === 'function') p.catch(() => { this.deck.volume = 0; this.blocked = true; this.waiting.push(() => { if (this.enabled && !this.held && this.deck.paused) this.start(); }); });
   }
 
@@ -114,8 +121,9 @@ export class Music {
     return this.enabled;
   }
 
-  /** Leaving the page (the wipe): its place saved, a short fade under the wipe; the next page picks it up there. */
-  leave(ms = 220): void { this.save(); this.fade(0, ms); }
+  /** Leaving the page (the wipe): its place saved; no fade — the track runs to the page's last moment and the next
+   *  page's head boot picks it up where it is. */
+  leave(): void { this.save(); }
 
   playing(): boolean { return !this.deck.paused; }
 }
@@ -123,9 +131,9 @@ export class Music {
 const noStore: Store = { getItem: () => null, setItem: () => { /* nothing */ } };
 const storeOr = (get: () => Store): Store => { try { return get(); } catch { return noStore; } };
 export const music: Music = typeof window !== 'undefined'
-  ? new Music(document.createElement('audio'), storeOr(() => localStorage), storeOr(() => sessionStorage))
+  ? new Music((window as unknown as { rvlMusicBoot?: HTMLAudioElement }).rvlMusicBoot ?? document.createElement('audio'), storeOr(() => localStorage), storeOr(() => sessionStorage))
   : new Music({ src: '', loop: false, preload: '', volume: 0, currentTime: 0, duration: 0, paused: true, play: () => undefined, pause: () => { /* nothing */ }, addEventListener: () => { /* nothing */ } }, noStore, noStore);
 
 if (typeof window !== 'undefined') {
-  (window as unknown as { rvlMusic: unknown }).rvlMusic = { playing: () => music.playing(), enabled: () => music.enabled, held: () => music.held, toggle: () => music.toggle(), hold: () => music.hold() };
+  (window as unknown as { rvlMusic: unknown }).rvlMusic = { playing: () => music.playing(), enabled: () => music.enabled, held: () => music.held, time: () => music.time(), toggle: () => music.toggle(), hold: () => music.hold() };
 }

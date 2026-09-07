@@ -71,8 +71,18 @@ describe('Music (owner: continuous across pages and sections, a MUS button, WATC
     expect(d2.currentTime).toBe(42); expect(m2.held).toBe(false); expect(m2.playing()).toBe(true);
   });
 
+  it('adopts the head boot’s element: no src reset, no second seek, just the volume', () => {
+    const d = deck(); d.src = TRACK; d.paused = false; d.currentTime = 50; d.volume = 0.2;
+    const session = mem(); session.setItem('rvl-music-pos', JSON.stringify({ t: 100, at: 0, held: false }));
+    const m = new Music(d, mem(), session, () => 99000, timers);
+    m.init(); d.fire('loadedmetadata');
+    expect(d.currentTime).toBe(50); expect(d.plays).toBe(0);
+    vi.advanceTimersByTime(200);
+    expect(d.volume).toBeCloseTo(VOLUME, 5); expect(m.time()).toBe(50);
+  });
+
   it('MUS off stops and remembers; on lifts a hold and plays; leaving saves and fades', async () => {
-    const d = deck(), local = mem(), m = new Music(d, local, mem(), () => 0, timers);
+    const d = deck(), local = mem(), mem2 = mem(), m = new Music(d, local, mem2, () => 0, timers);
     m.init(); d.fire('loadedmetadata'); await flush();
     expect(m.toggle()).toBe(false); vi.advanceTimersByTime(400);
     expect(local.getItem('rvl-music-v1')).toBe('off'); expect(d.paused).toBe(true);
@@ -80,7 +90,8 @@ describe('Music (owner: continuous across pages and sections, a MUS button, WATC
     expect(m2.enabled).toBe(false);
     m.hold(); expect(m.toggle()).toBe(true); await flush();
     expect(m.held).toBe(false); expect(m.playing()).toBe(true);
-    vi.advanceTimersByTime(600); m.leave(); vi.advanceTimersByTime(300);
-    expect(d.volume).toBe(0);
+    vi.advanceTimersByTime(600); d.currentTime = 77; m.leave(); vi.advanceTimersByTime(300);
+    expect(d.volume).toBeCloseTo(VOLUME, 5); // (no fade: it plays to the page's last moment)
+    expect(readSaved(mem2)!.t).toBe(77);
   });
 });

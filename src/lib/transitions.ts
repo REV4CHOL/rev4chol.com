@@ -29,7 +29,8 @@ export function leaveTo(href: string): void {
   const wipe = ensureWipe();
   const slices = wipe.querySelectorAll('.wipe-slice');
   sound.whoosh();
-  music.leave(); // (its place saved; a short fade under the wipe — the next page picks it up there)
+  music.leave(); // (its place saved; it plays to the last moment — the next page's head boot picks it up there)
+  void fetch(href, { credentials: 'same-origin' }).catch(() => { /* a warm cache is a bonus, not a need */ }); // the destination's HTML into the cache under the wipe: the navigation, and the music's return, without the wait
   // failsafe: a stalled navigation must not leave the page latched behind a
   // covered wipe with `leaving` stuck true — self-heal after 4s
   const t = window.setTimeout(() => {
