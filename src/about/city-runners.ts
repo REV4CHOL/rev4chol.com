@@ -22,6 +22,10 @@ export interface Solids { hit(x: number, y: number, z: number, r: number): unkno
 
 const LEAP = 12, THRUST = 60, ROCKET_MIN = 150, ROCKET_MAX = 520;
 const RUN_V = 0.14;
+/** THE PACE (owner: fewer runners, fewer jumps, slower): a leap flies at 0.14 a frame, a thruster hop at 0.25, a
+ *  rocket at 0.75; a runner rests one to two seconds on a roof between its runs, and three choices in five plan a
+ *  flight. (It used to fly again on the heels of a landing: a flight every five seconds — now one every ten or so.) */
+const LEAP_V = 0.14, THRUST_V = 0.25, ROCKET_V = 0.75, REST: [number, number] = [45, 135], FLIGHT_ODDS = 0.6;
 
 /** The axis-aligned gap between two roofs' footprints (negative where they overlap). */
 export const roofGap = (a: Roof, b: Roof): number => Math.max(Math.abs(b.x - a.x) - (a.w + b.w) / 2, Math.abs(b.z - a.z) - (a.d + b.d) / 2);
@@ -29,7 +33,7 @@ export const roofGap = (a: Roof, b: Roof): number => Math.max(Math.abs(b.x - a.x
 export class Runners {
   readonly runners: Runner[] = [];
   /** The thrusters' sparks: a ring of positions, colours and lives (the renderer draws them). */
-  readonly trail = { n: 6000, pos: new Float32Array(6000 * 3), col: new Float32Array(6000 * 3), vel: new Float32Array(6000 * 3), life: new Float32Array(6000), head: 0 }; // (three hundred runners: four times the sparks)
+  readonly trail = { n: 6000, pos: new Float32Array(6000 * 3), col: new Float32Array(6000 * 3), vel: new Float32Array(6000 * 3), life: new Float32Array(6000), head: 0 }; // (room for every thruster's trail at once)
   tick = 0;
   rockets = 0;
   private readonly roofs: Roof[];
@@ -180,7 +184,7 @@ export class Runners {
         case 'land': { // a roll, then on
           r.frame = ((this.tick + r.phase) >> 2) & 1 ? RUN_FRAME.walkA : RUN_FRAME.stand;
           r.y = r.roof.top;
-          if (--r.timer <= 0) { if (r0() < 0.8) this.choose(r); else { r.act = 'dance'; r.timer = 40 + r0() * 160; } } // (owner: no idle crowds on the roofs — mostly on, a short dance now and then)
+          if (--r.timer <= 0) this.roam(r); // the roll-out: on across the roof (owner: no idle crowds on the roofs; no flight on the heels of the last)
           break;
         }
       }
@@ -190,29 +194,36 @@ export class Runners {
    *  then, a run to another spot on this roof, or a dance. The flight is planned now; the runner first runs to its
    *  take-off point. */
   private choose(r: Runner): void {
-    const a = this.rand();
+    const a = this.rand() / FLIGHT_ODDS; // three choices in five plan a flight
     // the kinds in the order they are tried: a leap first, most often; a hop; now and then a rocket; the next kind when
     // one cannot be planned from this roof (a runner used to dance whenever its first choice found no roof)
-    const order: ('leap' | 'thrust' | 'rocket')[] = a < 0.5 ? ['leap', 'thrust'] : a < 0.8 ? ['thrust', 'leap'] : a < 0.9 ? ['rocket', 'thrust', 'leap'] : [];
+    const order: ('leap' | 'thrust' | 'rocket')[] = a < 0.5 ? ['leap', 'thrust'] : a < 0.8 ? ['thrust', 'leap'] : a < 1 ? ['rocket', 'thrust', 'leap'] : [];
     for (const kind of order) {
       const flight = this.plan(r, kind);
       if (!flight) continue;
       r.to = flight.to; r.from = flight.from; r.dest = flight.dest; r.lift = flight.lift;
       const dist = Math.hypot(flight.dest[0] - flight.from[0], flight.dest[2] - flight.from[2]);
-      r.T = Math.max(kind === 'leap' ? 26 : kind === 'thrust' ? 60 : 200, Math.round(dist / (kind === 'leap' ? 0.17 : kind === 'thrust' ? 0.3 : 0.75)));
+      r.T = Math.max(kind === 'leap' ? 32 : kind === 'thrust' ? 72 : 200, Math.round(dist / (kind === 'leap' ? LEAP_V : kind === 'thrust' ? THRUST_V : ROCKET_V)));
       r.t = 0;
       r.tx = flight.from[0]; r.tz = flight.from[2];
       r.act = 'run';
       (r as Runner & { next?: 'leap' | 'thrust' | 'rocket' }).next = kind;
       return;
     }
-    if (this.rand() < 0.75) { const spot = this.spotOn(r.roof); r.tx = spot[0]; r.tz = spot[1]; r.act = 'run'; (r as Runner & { next?: null }).next = null; }
-    else { r.act = 'dance'; r.timer = 40 + this.rand() * 160; }
+    if (this.rand() < 0.7) this.roam(r); else this.rest(r);
   }
-  /** Arrived at the spot: take off if a flight was planned, else dance. */
+  /** A run across this roof to a fresh spot, nothing planned beyond it. */
+  private roam(r: Runner): void {
+    const spot = this.spotOn(r.roof);
+    r.tx = spot[0]; r.tz = spot[1]; r.act = 'run';
+    (r as Runner & { next?: null }).next = null;
+  }
+  /** A rest on the roof — a dance on the spot, one to two seconds — before the next choice. */
+  private rest(r: Runner): void { r.act = 'dance'; r.timer = REST[0] + this.rand() * (REST[1] - REST[0]); }
+  /** Arrived at the spot: take off if a flight was planned; else a second run across the roof sometimes, else a rest. */
   private arrive(r: Runner): void {
     const next = (r as Runner & { next?: 'leap' | 'thrust' | 'rocket' | null }).next;
     if (next && r.to) { r.act = next; r.t = 0; if (next !== 'leap') { r.flights += 1; if (next === 'rocket') this.rockets += 1; } return; }
-    r.act = 'dance'; r.timer = 40 + this.rand() * 160;
+    if (this.rand() < 0.5) this.roam(r); else this.rest(r);
   }
 }

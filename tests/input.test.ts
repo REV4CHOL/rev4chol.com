@@ -524,3 +524,63 @@ describe('PanController pointer capture', () => {
     }
   });
 });
+
+describe("the desktop's zoom (owner, on a Mac Studio: 'I cannot zoom out or in in the Works section')", () => {
+  const wheel = (listeners: Record<string, Listener>, e: Record<string, unknown>) =>
+    listeners.wheel({ deltaMode: 0, deltaX: 0, deltaY: 0, clientX: 100, clientY: 100, preventDefault: () => {}, ...e } as unknown as FakeEvent);
+
+  it('zooms about the cursor on a trackpad pinch (a wheel with ctrl held): the world point under the cursor stays put', () => {
+    const { host, state } = makeZoom({ x: 100, y: 100 }, 1);
+    const { pan, listeners } = makeController({ minX: -1000, maxX: 1000, minY: -1000, maxY: 1000 }, false, () => {}, host);
+    pan.panTo(40, -20);
+    // the world point under the cursor at (160, 130): (160 - 100 - 40) / 1 = 20, (130 - 100 + 20) / 1 = 50
+    wheel(listeners, { ctrlKey: true, deltaY: -50, clientX: 160, clientY: 130 }); // pinch out: zoom in
+    expect(state.s).toBeGreaterThan(1);
+    expect(state.s).toBeCloseTo(Math.exp(0.5), 5);
+    const worldX = (160 - 100 - pan.pos.x) / state.s, worldY = (130 - 100 - pan.pos.y) / state.s;
+    expect(worldX).toBeCloseTo(20, 6);
+    expect(worldY).toBeCloseTo(50, 6);
+    wheel(listeners, { ctrlKey: true, deltaY: 50, clientX: 160, clientY: 130 }); // and back
+    expect(state.s).toBeCloseTo(1, 6);
+    expect(pan.pos.x).toBeCloseTo(40, 6);
+    expect(pan.pos.y).toBeCloseTo(-20, 6);
+  });
+
+  it("clamps the zoom to the host's range and does nothing past it", () => {
+    const { host, state } = makeZoom({ x: 100, y: 100 }, 1);
+    const { pan, listeners } = makeController({ minX: -1000, maxX: 1000, minY: -1000, maxY: 1000 }, false, () => {}, host);
+    for (let i = 0; i < 40; i++) wheel(listeners, { ctrlKey: true, deltaY: -100 });
+    expect(state.s).toBe(2);
+    for (let i = 0; i < 80; i++) wheel(listeners, { ctrlKey: true, deltaY: 100 });
+    expect(state.s).toBe(0.5);
+    expect(Number.isFinite(pan.pos.x) && Number.isFinite(pan.pos.y)).toBe(true);
+  });
+
+  it("pans on a trackpad's two-finger scroll (small, two-axis deltas) and zooms on a mouse wheel's notch", () => {
+    const { host, state } = makeZoom({ x: 100, y: 100 }, 1);
+    const { pan, listeners } = makeController({ minX: -1000, maxX: 1000, minY: -1000, maxY: 1000 }, false, () => {}, host);
+    wheel(listeners, { deltaX: 6.5, deltaY: -12.25 }); // a trackpad scroll
+    expect(state.s).toBe(1);
+    expect(pan.pos.x).toBeCloseTo(-6.5, 6);
+    expect(pan.pos.y).toBeCloseTo(12.25, 6);
+    wheel(listeners, { deltaY: -100 }); // a mouse notch, up: zoom in
+    expect(state.s).toBeGreaterThan(1);
+    wheel(listeners, { deltaMode: 1, deltaY: 3 }); // a line-mode notch (Firefox), down: zoom out
+    expect(state.s).toBeLessThan(Math.exp(0.25));
+  });
+
+  it("zooms by Safari's gesture events, whose scale is cumulative from the gesture's start", () => {
+    const { host, state } = makeZoom({ x: 100, y: 100 }, 1);
+    const { listeners } = makeController({ minX: -1000, maxX: 1000, minY: -1000, maxY: 1000 }, false, () => {}, host);
+    const g = (type: string, scale: number) => listeners[type]({ scale, clientX: 100, clientY: 100, preventDefault: () => {} } as unknown as FakeEvent);
+    g('gesturestart', 1);
+    g('gesturechange', 1.2);
+    expect(state.s).toBeCloseTo(1.2, 6);
+    g('gesturechange', 1.5);
+    expect(state.s).toBeCloseTo(1.5, 6);
+    g('gestureend', 1.5);
+    g('gesturestart', 1);
+    g('gesturechange', 0.8);
+    expect(state.s).toBeCloseTo(1.2, 6);
+  });
+});

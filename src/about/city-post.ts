@@ -13,8 +13,11 @@ import { HalfFloatType, ShaderMaterial, Vector3, WebGLRenderTarget, WebGLRendere
 import { FullScreenQuad, Pass } from 'three/addons/postprocessing/Pass.js';
 
 /** A composer target in half floats (the bloom's headroom). */
-export function lensTarget(w: number, h: number): WebGLRenderTarget {
-  return new WebGLRenderTarget(w, h, { type: HalfFloatType });
+/** The composer's target: half-float for the bloom's range; `samples` above zero multisamples the scene pass — the
+ *  desktop's anti-aliasing (a half-resolution render of thin kit and window grids sparkled under the camera's motion:
+ *  the owner's "window glitch" on the PC once the phone was sharp). */
+export function lensTarget(w: number, h: number, samples = 0): WebGLRenderTarget {
+  return new WebGLRenderTarget(w, h, { type: HalfFloatType, samples });
 }
 
 const VERT = /* glsl */ `

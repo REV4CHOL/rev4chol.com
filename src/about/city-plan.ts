@@ -213,6 +213,9 @@ export interface Rail {
   /** A portal frame's centre on the line, and the line's direction there (its legs stand at ±RAIL.leg). */
   portals: { x: number; z: number; dx: number; dz: number }[];
 }
+/** A searchlight's lamp: where it stands, its beam's length and colour, its phase in the sweep (the renderer sweeps it). */
+export interface Searchlight { x: number; y: number; z: number; len: number; color: string; phase: number }
+
 export interface Plan {
   rail: Rail;
   core: Solid[];
@@ -263,6 +266,8 @@ export interface Plan {
   sprawlLamps: number[];
   neon: { pos: number[]; col: string[] };
   beacons: { x: number; y: number; z: number }[];
+  /** The searchlights: on the stadium's masts, the megastructure, the wheel's crown, a stack — none inside anything. */
+  searchlights: Searchlight[];
   pois: Poi[];
   streets: Street[];
   stadium: {
@@ -458,6 +463,74 @@ const VEND = ['#ff3b3b', '#5df2ff', '#ffd23f', '#ff4fd8', '#3dff8f', '#f4f1e8'];
 const OUTER_PROFILE: Profile = { ...DISTRICTS.mid, lo: 6, hi: 24, stack: 1, kit: 0.3, signs: 0.3, over: 0, arcade: 0 };
 
 interface Rect { x: number; z: number; w: number; d: number }
+
+/** THE ENDLESS CITY (owner: "beyond boundaries, make the illusion of the city spanning infinite, like a mega massive
+ *  city — it has to look like our current city"): the built square (core and outer ring, ±399, 21 blocks) is copied
+ *  into rings of TILES about it — its period the square's span, each tile turned a quarter turn or three by its
+ *  coordinates so the landmarks' pattern never repeats in step. The streets continue across the seams: the grid is
+ *  symmetric under a quarter turn and periodic in 21 blocks, and the seam lies down the middle of a shared street.
+ *  Ring 1 is the eight tiles about the square; ring 2 the sixteen about those, whose near edges (1197) lie inside the
+ *  far plane (1500) and whose far edges the fog owns. The renderer places the masses (not the kit, not the trees, not
+ *  the unique landmarks) with the city's own materials, no shadows, ring 1 at every tier and ring 2 from high. */
+export const TILE_P = (2 * (HALF + OUTER) + 1) * G;
+export interface CityTile { dx: number; dz: number; q: number; ring: 1 | 2 }
+/** The tiles of the first `rings` rings about the built square: their offsets and their quarter turns. */
+export function cityTiles(rings: 1 | 2): CityTile[] {
+  const out: CityTile[] = [];
+  for (let i = -rings; i <= rings; i++) for (let j = -rings; j <= rings; j++) {
+    const ring = Math.max(Math.abs(i), Math.abs(j));
+    if (ring === 0) continue;
+    out.push({ dx: i * TILE_P, dz: j * TILE_P, q: (((i * 3 + j * 5) % 4) + 4) % 4, ring: ring as 1 | 2 });
+  }
+  return out;
+}
+
+/** THE CAT'S TAIL (owner: the tail clipped through the building it sits on): a polyline in the cat's frame, in
+ *  sixteenths of the cat's width — from the root inside the haunch, out past the haunch's back and over the parapet
+ *  (above the roof line), then straight down the wall OUTSIDE it. The summit's face lies two thirds of a sixteenth
+ *  behind the root; the hanging run a sixteenth and three quarters, a box's half-depth and a step clear of it. The
+ *  swish is a swing about the tail's z axis — along the wall, never into it (it used to swing about y and x, into it).
+ *  The chain used to curl back under the roof line: its last four boxes hung inside the tier. */
+export const CAT_TAIL = {
+  root: [2.6, 1.6, -3.9] as [number, number, number],
+  points: [[0, 0, 0], [0.6, 0.5, -0.9], [1.3, 0.3, -1.7], [1.6, -1.6, -1.75], [1.5, -3.6, -1.75], [1.1, -5.4, -1.75], [0.5, -6.6, -1.9]] as [number, number, number][],
+  girth: 1.1, swing: 0.12,
+};
+/** A box of the tail's chain in the TAIL's frame, world units: its centre, its size, its Euler XYZ rotation. */
+export interface TailBox { c: [number, number, number]; size: [number, number, number]; rot: [number, number, number] }
+/** The tail's boxes for a cat `w` wide (the renderer draws them, the test measures them): one along each leg of the
+ *  polyline, half a sixteenth longer than the leg so the chain stays continuous round the bends, thinner at the tip;
+ *  the box's y axis turned onto the leg (Euler XYZ with y zero: rx = atan2(dz, dy), rz = −asin(dx / L)). */
+export function catTailBoxes(w: number): TailBox[] {
+  const u = w / 16, P = CAT_TAIL.points, out: TailBox[] = [];
+  for (let k = 0; k + 1 < P.length; k++) {
+    const [ax, ay, az] = P[k], [bx, by, bz] = P[k + 1];
+    const dx = (bx - ax) * u, dy = (by - ay) * u, dz = (bz - az) * u, L = Math.hypot(dx, dy, dz);
+    const g = CAT_TAIL.girth * u * (k === P.length - 2 ? 0.8 : 1);
+    out.push({ c: [(ax + bx) / 2 * u, (ay + by) / 2 * u, (az + bz) / 2 * u], size: [g, L + 0.5 * u, g], rot: [Math.atan2(dz, dy), 0, -Math.asin(dx / L)] });
+  }
+  return out;
+}
+/** Every corner of every tail box in WORLD space for a swing of the tail (radians about its z axis) — the chain's
+ *  transform as the renderer applies it: each box's own rotation, the swing about the root, the root, the cat's yaw
+ *  about y, the cat's place. */
+export function catTailCorners(cat: { x: number; y: number; z: number; yaw: number; w: number }, swing: number): [number, number, number][] {
+  type V = [number, number, number];
+  const u = cat.w / 16, out: V[] = [];
+  const rotX = (v: V, t: number): V => [v[0], v[1] * Math.cos(t) - v[2] * Math.sin(t), v[1] * Math.sin(t) + v[2] * Math.cos(t)];
+  const rotY = (v: V, t: number): V => [v[0] * Math.cos(t) + v[2] * Math.sin(t), v[1], -v[0] * Math.sin(t) + v[2] * Math.cos(t)];
+  const rotZ = (v: V, t: number): V => [v[0] * Math.cos(t) - v[1] * Math.sin(t), v[0] * Math.sin(t) + v[1] * Math.cos(t), v[2]];
+  for (const b of catTailBoxes(cat.w)) for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) {
+    let v: V = [sx * b.size[0] / 2, sy * b.size[1] / 2, sz * b.size[2] / 2];
+    v = rotX(rotZ(v, b.rot[2]), b.rot[0]); // Euler XYZ: z first, then x (y is never set)
+    v = [v[0] + b.c[0], v[1] + b.c[1], v[2] + b.c[2]];
+    v = rotZ(v, swing);
+    v = [v[0] + CAT_TAIL.root[0] * u, v[1] + CAT_TAIL.root[1] * u, v[2] + CAT_TAIL.root[2] * u];
+    v = rotY(v, cat.yaw);
+    out.push([v[0] + cat.x, v[1] + cat.y, v[2] + cat.z]);
+  }
+  return out;
+}
 
 export function planCity(seed: number): Plan {
   const rand = mulberry32(seed);
@@ -2857,6 +2930,16 @@ export function planCity(seed: number): Plan {
     ...stacks.map((s) => ({ x: s.x, y: s.top + 1.4, z: s.z })),
     ...tall.slice(0, 26).map((t) => ({ x: t.x, y: t.top + 1.8, z: t.z })),
   ];
+  // -- THE SEARCHLIGHTS (the renderer sweeps a beam from each): on the stadium's masts, the megastructure, the wheel's
+  // crown, the first stack --------------------------------------------------------------------------------------
+  const searchlights: Searchlight[] = [
+    { x: stadium.masts[0].x, y: stadium.masts[0].h, z: stadium.masts[0].z, len: 150, color: '#dfeeff', phase: 0.3 },
+    { x: stadium.masts[3].x, y: stadium.masts[3].h, z: stadium.masts[3].z, len: 150, color: '#dfeeff', phase: 2.1 },
+    // (no lamp on the summit tier: the cat sits there — a beam used to rise from under its chin)
+    { x: mgx - 20, y: mega.top - 28, z: mgz + 20, len: 140, color: '#ffd6e8', phase: 3.9 },
+    { x: wheel.x, y: wheel.y + wheel.r + 1, z: wheel.z, len: 120, color: '#fff0d0', phase: 0.8 },
+    ...stacks.slice(0, 1).map((s) => ({ x: s.x + 8, y: s.top - 6, z: s.z, len: 130, color: '#cfe6ff', phase: 4.6 })),
+  ];
 
   // -- the sprawl: past the outer ring, massing for the fog ------------------
   const clusters = [0, 1, 2].map(() => {
@@ -2953,7 +3036,7 @@ export function planCity(seed: number): Plan {
   }
   return {
     core, outer, sprawl, strips, leds, awnings, tarps, clutter, billboards, spots, signs, posts, lanterns, wires, vents, holos, stalls, sprawlLamps, neon,
-    beacons, pois, streets, stadium, wheel, mega, stacks, bridges, styles, sprawlTex, grid, landmark, roomAhead, air, pads, rail, piers, patches, parked, poles, superblocks, doors, lifts, subways,
+    beacons, searchlights, pois, streets, stadium, wheel, mega, stacks, bridges, styles, sprawlTex, grid, landmark, roomAhead, air, pads, rail, piers, patches, parked, poles, superblocks, doors, lifts, subways,
     parties, perches, stages, gates, fireworks, cat, plazas, roofs,
   };
 }

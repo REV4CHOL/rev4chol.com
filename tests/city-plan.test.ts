@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Vector3 } from 'three';
-import {
-  ARTERIAL, ARTERIAL_ROW, arterialLat, arterialZ, AutoFlight, BOUND, CAM_R, CANAL, carriagewayAt, CITADEL, CollisionGrid, districtOf, EXT, G, HIGHWAY, LANE_CAR, LANE_W, MEDIAN, planCity, RAIL, RAMP, RAMP_W, rampY,
-  ROAD, starPositions, STREET, streetAt, tourRoute,
-} from '../src/about/city-plan';
+import { ARTERIAL, ARTERIAL_ROW, arterialLat, arterialZ, AutoFlight, BOUND, CAM_R, CANAL, carriagewayAt, CAT_TAIL, catTailCorners, CITADEL, cityTiles, CollisionGrid, districtOf, EXT, G, HALF, HIGHWAY, LANE_CAR, LANE_W, MEDIAN, OUTER, planCity, RAIL, RAMP, RAMP_W, rampY, ROAD, starPositions, STREET, streetAt, TILE_P, tourRoute } from '../src/about/city-plan';
 import { mulberry32 } from '../src/lib/rng';
 import { streetPoint } from '../src/about/city-traffic';
 import { FAMILIES, FLOOR as SKIN_FLOOR, PX as SKIN_PX, SHOP as SKIN_SHOP } from '../src/about/city-skins';
@@ -585,6 +582,23 @@ describe('The viaduct over its arterial (owner: roads that exist in real life)',
     for (const f of plan.fireworks) expect(plan.grid.hit(f.x, f.y + 6, f.z, 1), 'clear sky over a launch site').toBeNull();
   });
 
+  it("hangs the cat's tail over the parapet and down the summit's wall, outside it, through the whole swish (owner: the tail clipped through the building)", () => {
+    const cat = plan.cat!;
+    let below = 0;
+    for (const swing of [-CAT_TAIL.swing, 0, CAT_TAIL.swing]) for (const [x, y, z] of catTailCorners(cat, swing)) {
+      if (y >= cat.y - 0.6) continue; // above the roof line the chain lies over the parapet, within the cat's own box
+      below += 1;
+      expect(plan.grid.hit(x, y, z, 0.05), `a tail corner inside the building at ${x.toFixed(1)},${y.toFixed(1)},${z.toFixed(1)} (swing ${swing})`).toBeNull();
+    }
+    expect(below, 'the tail hangs down the wall').toBeGreaterThan(20);
+    expect(Math.min(...catTailCorners(cat, 0).map((c) => c[1])), 'its tip well below the roof').toBeLessThan(cat.y - 6);
+  });
+
+  it("starts no searchlight inside a solid or the cat (owner: a searchlight within the cat's body)", () => {
+    expect(plan.searchlights.length).toBeGreaterThanOrEqual(4);
+    for (const s of plan.searchlights) expect(plan.grid.hit(s.x, s.y + 0.6, s.z, 0.25), `a searchlight's lamp inside something at ${s.x},${s.y},${s.z}`).toBeNull();
+  });
+
   it('straddles the avenue with two gates: towers either side, a bridge building over the roads and the median, the avenue open beneath and above', () => {
     expect(plan.gates.length).toBe(2);
     for (const g of plan.gates) {
@@ -719,5 +733,22 @@ describe('starPositions', () => {
     }
     expect(zenith).toBeGreaterThan(150); // the cap above 70° is ~6% of the sphere → ~220 of 4000
     for (const [i, n] of bins.entries()) expect(n, `elevation bin ${i * 10}°`).toBeGreaterThan(40);
+  });
+});
+
+describe('The endless city (owner: beyond the boundaries, the illusion of a city spanning infinite, looking like ours)', () => {
+  it('tiles the built square about itself: eight tiles in the first ring, twenty-four in two, none over the square, the period its span', () => {
+    expect(TILE_P).toBe((2 * (HALF + OUTER) + 1) * G);
+    expect(cityTiles(1).length).toBe(8);
+    const tiles = cityTiles(2);
+    expect(tiles.length).toBe(24);
+    for (const t of tiles) {
+      expect(Math.max(Math.abs(t.dx), Math.abs(t.dz)), 'a tile never overlaps the built square').toBeGreaterThanOrEqual(TILE_P);
+      expect(Math.abs(t.dx) % TILE_P).toBe(0); expect(Math.abs(t.dz) % TILE_P).toBe(0);
+      expect(t.q).toBeGreaterThanOrEqual(0); expect(t.q).toBeLessThanOrEqual(3);
+      expect(t.ring).toBe(Math.max(Math.abs(t.dx), Math.abs(t.dz)) / TILE_P);
+    }
+    expect(new Set(cityTiles(1).map((t) => t.q)).size, 'the first ring turns its tiles more than one way').toBeGreaterThanOrEqual(3);
+    expect(2 * TILE_P - TILE_P / 2, "ring 2's near edge lies inside the far plane").toBeLessThan(1500);
   });
 });

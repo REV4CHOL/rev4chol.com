@@ -182,3 +182,42 @@ Mobile blur: the canvas was sized in CSS pixels over PIX with the device pixel r
 half-resolution pixel count), adapting to the frame (down a fifth while a render averages over 26 ms, back up under 14,
 floor 0.6× CSS); rvlRide.quality() reports the scale and the buffer. Measured in the pane at 375 × 812, ratio 2:
 469 × 1015, 8.5 ms a render.
+
+## Follow-up 3 (2026-09-07, HASH): the runners' pace, the sound, the cat, the tagline, the PC's pixels, the works zoom
+
+Owner, in two messages. First: "reduce number of rooftop runners, down to 150 pls. And reduce their jumping
+frequency, make it slower. Remove completely SFX from the city. Orange cat's tail is clipping through the building
+its sitting on. There is a searchlight within the cat's body. REMOve it." Then: "the windows bug I talk about, fixed
+on mobile, but on PC still happening (iPhone Safari; Windows PC Chrome)"; "On Mac Studio, I cannot zoom out or in in
+the Works section"; "On Homepage, change AI_GENERALIST to FILMMAKER".
+
+- RUNNERS: 150 on a desktop (120 on a phone). A leap flies at 0.14 a frame (was 0.17), a thruster hop at 0.25 (0.3);
+  three choices in five plan a flight (nine in ten did); a landing runs on across the roof, and a rest of one to two
+  seconds sits between runs. Measured in the sim: 5.9 take-offs a runner a minute (11.7 before — a flight every ten
+  seconds, was every five), a third of the time in the air, 41 % resting. Tested (`tests/city-runners.test.ts`).
+- SOUND: `city-audio.ts` and its test deleted; the renderer no longer builds or updates the beds. The site's own
+  UI clicks (lib/sound) stay — they are the chrome's, not the city's.
+- THE CAT'S TAIL: it clipped because its lower four boxes curled back under the roof line into the summit tier (the
+  root sits 1.2 inside the tier's east face; the bends reached back 1.6 at most, and the last two curled forward), and
+  the swish (about y and x) swung it further in. Now a polyline in the plan (`CAT_TAIL`, `catTailBoxes`,
+  `catTailCorners`): out past the haunch, over the parapet above the roof line, straight down the wall a box's
+  half-depth and a step clear of it; the swish is a swing about the tail's z — along the wall, never into it. Tested:
+  every corner below the roof line, through the whole swish, clear of every solid.
+- THE SEARCHLIGHT: the megastructure's summit beam stood at its old top point, under the cat's chin. The searchlights
+  moved into the plan (`plan.searchlights`, the renderer sweeps them); the summit's is gone. Tested: no lamp inside a
+  solid or the cat.
+- THE TAGLINE: "colorist, editor, filmmaker" (site.json; the homepage's roles bar underscores it).
+- THE PC'S PIXELS: the phone renders at its own pixel ratio since f5c4115 — that is why the owner's "window glitch" was
+  fixed there and not on the PC. Measured on the desktop path with a pixel probe (`rvlRide.grab`): a still frame is
+  clean (0 changed pixels), but a slow camera pan makes 1.3 % of the pixels on a distant tower's window grids sparkle
+  — sub-pixel kit and grids at a half-resolution render with no anti-aliasing, nearest-upscaled. Four changes: the
+  desktop's scene pass is multisampled (four samples, `lensTarget`); the desktop renders at min(ratio, 2) / PIX like
+  the phone (PIX device pixels a render pixel, whatever the ratio); the high and ultra tiers render at PIX 1 — the
+  screen's own pixels (render 1898 × 1080 at 4 ms on the owner's PC); and a tier that ran long is closed for the
+  session, so the ladder never climbs back into it every dozen seconds. Debug API: `grab`, `setSamples`, `scene`.
+- THE WORKS ZOOM: the floor only knew a two-finger pinch on a touch screen. Now a trackpad pinch (a wheel with ctrl
+  held: Chrome, Edge, Firefox) or Safari's gesture events zoom about the cursor, a mouse wheel's notch zooms, a
+  trackpad's two-finger scroll pans; the world point under the cursor holds still, as under a pinch. Tested
+  (`tests/input.test.ts`, four cases).
+- Not touched, noted: the megastructure's second beam floats off the second tier's corner (113, 88, −113); a stack's
+  beam floats beside its chimney.

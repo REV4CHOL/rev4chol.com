@@ -40,9 +40,9 @@ describe('Runners', () => {
     expect(sim.rockets).toBeGreaterThan(0);
   }, 120000);
 
-  it('runs three hundred (owner: massively more runners) cheaply: under two milliseconds a frame, every one on a roof or an arc', () => {
-    const sim = new Runners(plan.roofs, plan.grid, mulberry32(11), 300);
-    expect(sim.runners.length).toBe(300);
+  it('runs a hundred and fifty (owner: massively more runners, then down to a hundred and fifty) cheaply: under two milliseconds a frame, every one on a roof or an arc', () => {
+    const sim = new Runners(plan.roofs, plan.grid, mulberry32(11), 150);
+    expect(sim.runners.length).toBe(150);
     for (let f = 0; f < 300; f++) sim.step(); // warm up: the first flights planned
     const t0 = performance.now();
     for (let f = 0; f < 600; f++) sim.step();
@@ -50,8 +50,26 @@ describe('Runners', () => {
     expect(perFrame).toBeLessThan(2);
     for (const r of sim.runners) expect(Number.isFinite(r.x + r.y + r.z)).toBe(true);
     expect(sim.runners.filter((r) => r.act === 'thrust' || r.act === 'rocket' || r.act === 'leap').length).toBeGreaterThan(5); // a crowd in the air at any moment
-    expect(sim.runners.filter((r) => r.act !== 'dance').length, 'most of them on the move (owner: no idle crowds on the roofs)').toBeGreaterThan(120);
+    expect(sim.runners.filter((r) => r.act !== 'dance').length, 'most of them on the move (owner: no idle crowds on the roofs)').toBeGreaterThan(60);
   });
+
+  it("jumps at a runner's pace, not a flea's (owner: fewer jumps, slower): a flight every six to fourteen seconds a runner, most of the time on a roof", () => {
+    const sim = new Runners(plan.roofs, plan.grid, mulberry32(5), 60);
+    const was = sim.runners.map((r) => r.act);
+    const flying = (a: string) => a === 'leap' || a === 'thrust' || a === 'rocket';
+    let takeoffs = 0, air = 0, dancing = 0, samples = 0;
+    for (let f = 0; f < 6000; f++) {
+      sim.step();
+      sim.runners.forEach((r, i) => { if (flying(r.act) && !flying(was[i])) takeoffs += 1; was[i] = r.act; });
+      if (f >= 1200) { samples += 1; air += sim.runners.filter((r) => flying(r.act)).length; dancing += sim.runners.filter((r) => r.act === 'dance').length; }
+    }
+    const perRunnerMinute = takeoffs / 60 / (6000 / 3600); // take-offs a runner a minute, at sixty frames a second
+    console.log(`runners: ${perRunnerMinute.toFixed(1)} take-offs a runner a minute; in the air ${(air / samples / 60 * 100).toFixed(0)} %, dancing ${(dancing / samples / 60 * 100).toFixed(0) } %`);
+    expect(perRunnerMinute, 'a flight every six to fourteen seconds').toBeGreaterThan(4);
+    expect(perRunnerMinute, 'a flight every six to fourteen seconds').toBeLessThan(10);
+    expect(air / samples / 60, 'most of the time on a roof').toBeLessThan(0.4); // (a rocket crosses the city in five to ten seconds: a fifth of the flights, a third of the air time)
+    expect(dancing / samples / 60, 'and not idling there (owner: no idle crowds on the roofs)').toBeLessThan(0.45);
+  }, 60000);
 
   it('is deterministic for a seed', () => {
     const a = new Runners(plan.roofs, plan.grid, mulberry32(3), 20), b = new Runners(plan.roofs, plan.grid, mulberry32(3), 20);

@@ -55,7 +55,62 @@ export class PanController {
     el.addEventListener('pointermove', this.onMove);
     el.addEventListener('pointerup', this.onUp);
     el.addEventListener('pointercancel', this.onUp);
+    // THE DESKTOP'S ZOOM (owner, on a Mac Studio: "I cannot zoom out or in in the Works section" — the floor only knew
+    // a two-finger pinch on a touch screen): a trackpad's pinch arrives as a wheel with ctrlKey held (Chrome, Edge,
+    // Firefox) or as Safari's gesture events; a mouse wheel's notch zooms too, a trackpad's two-finger scroll pans.
+    // Every zoom is about the cursor, the world point under it held still, as the pinch does.
+    el.addEventListener('wheel', this.onWheel, { passive: false });
+    el.addEventListener('gesturestart', this.onGestureStart as EventListener, { passive: false });
+    el.addEventListener('gesturechange', this.onGestureChange as EventListener, { passive: false });
+    el.addEventListener('gestureend', this.onGestureEnd as EventListener, { passive: false });
   }
+
+  /** Zoom by a factor about a screen point, the world point under it held still; clamped to the host's range. The
+   *  caller settles `pos` from `raw` afterwards (applyDelta does). */
+  zoomAbout(px: number, py: number, factor: number): boolean {
+    if (!this.zoomHost || !(factor > 0)) return false;
+    const sOld = this.zoomHost.get();
+    const floor = Math.min(this.zoomHost.min?.() ?? MIN_SCALE, MIN_SCALE);
+    const sNew = clamp(sOld * factor, floor, MAX_SCALE);
+    if (sNew === sOld) return false;
+    // world = (p - C - pos) / s  =>  pos' = p - C - world * s'
+    const C = this.zoomHost.center();
+    const k = sNew / sOld;
+    this.raw.x = px - C.x - (px - C.x - this.raw.x) * k;
+    this.raw.y = py - C.y - (py - C.y - this.raw.y) * k;
+    this.zoomHost.set(sNew);
+    return true;
+  }
+
+  /** A wheel or a gesture starts no drag: pick up from where the floor IS (a coast, a panTo) as a pointer's down does. */
+  private settleRaw(): void { if (!this.dragging) { this.raw = { ...this.pos }; this.vel = { x: 0, y: 0 }; } }
+  private onWheel = (e: WheelEvent) => {
+    e.preventDefault(); // (the page under the floor must neither scroll nor browser-zoom)
+    this.settleRaw();
+    const k = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 100 : 1; // lines, pages → px
+    const dy = e.deltaY * k, dx = e.deltaX * k;
+    // a pinch (ctrl held by the browser), a wheel with a modifier, or a mouse wheel's notch (a whole, large step with
+    // no sideways part — a trackpad's scroll is small, fractional, two-axis) zooms; anything else pans
+    const notch = e.deltaMode !== 0 || (Math.abs(dy) >= 40 && dx === 0 && Number.isInteger(dy));
+    if (e.ctrlKey || e.metaKey || notch) {
+      const factor = Math.exp(-dy * (e.ctrlKey ? 0.01 : 0.0025));
+      if (this.zoomAbout(e.clientX, e.clientY, factor)) this.applyDelta(0, 0, 0);
+      return;
+    }
+    this.raw.x -= dx; this.raw.y -= dy; // (raw, not pos: the rubber band and the clamp apply as they do to a drag)
+    this.vel = { x: 0, y: 0 };
+    this.applyDelta(0, 0, 0);
+  };
+  /** Safari's pinch: GestureEvent.scale is cumulative from the gesture's start. */
+  private gestureScale = 1;
+  private onGestureStart = (e: Event & { scale?: number }) => { e.preventDefault(); this.settleRaw(); this.gestureScale = e.scale ?? 1; };
+  private onGestureChange = (e: Event & { scale?: number; clientX?: number; clientY?: number }) => {
+    e.preventDefault();
+    const s = e.scale ?? 1;
+    if (this.gestureScale > 0 && this.zoomAbout(e.clientX ?? 0, e.clientY ?? 0, s / this.gestureScale)) this.applyDelta(0, 0, 0);
+    this.gestureScale = s;
+  };
+  private onGestureEnd = (e: Event) => { e.preventDefault(); this.gestureScale = 1; };
 
   /** Camera bounds in screen px scale with the zoom (world extents shrink when zoomed out). */
   private b(): Bounds {
@@ -134,20 +189,7 @@ export class PanController {
     const [p1, p2] = [...this.touches.values()];
     const d = Math.hypot(p2.x - p1.x, p2.y - p1.y);
     const mid = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
-    if (this.zoomHost && this.pinchDist! > 0 && d > 0) {
-      const sOld = this.zoomHost.get();
-      const floor = Math.min(this.zoomHost.min?.() ?? MIN_SCALE, MIN_SCALE);
-      const sNew = clamp(sOld * (d / this.pinchDist!), floor, MAX_SCALE);
-      if (sNew !== sOld) {
-        // keep the world point under the fingers stationary while the scale changes:
-        // world = (mid - C - pos) / s  =>  pos' = mid - C - world * s'
-        const C = this.zoomHost.center();
-        const k = sNew / sOld;
-        this.raw.x = mid.x - C.x - (mid.x - C.x - this.raw.x) * k;
-        this.raw.y = mid.y - C.y - (mid.y - C.y - this.raw.y) * k;
-        this.zoomHost.set(sNew);
-      }
-    }
+    if (this.pinchDist! > 0 && d > 0) this.zoomAbout(mid.x, mid.y, d / this.pinchDist!); // the world point under the fingers held still
     this.pinchDist = d;
     this.applyDelta(mid.x - this.last.x, mid.y - this.last.y, now - this.lastStamp);
     this.last = mid;
@@ -210,6 +252,10 @@ export class PanController {
     this.el.removeEventListener('pointermove', this.onMove);
     this.el.removeEventListener('pointerup', this.onUp);
     this.el.removeEventListener('pointercancel', this.onUp);
+    this.el.removeEventListener('wheel', this.onWheel);
+    this.el.removeEventListener('gesturestart', this.onGestureStart as EventListener);
+    this.el.removeEventListener('gesturechange', this.onGestureChange as EventListener);
+    this.el.removeEventListener('gestureend', this.onGestureEnd as EventListener);
     this.touches.clear();
   }
 
