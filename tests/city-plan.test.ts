@@ -594,9 +594,23 @@ describe('The viaduct over its arterial (owner: roads that exist in real life)',
     expect(Math.min(...catTailCorners(cat, 0).map((c) => c[1])), 'its tip well below the roof').toBeLessThan(cat.y - 6);
   });
 
-  it("starts no searchlight inside a solid or the cat (owner: a searchlight within the cat's body)", () => {
+  it("stands every searchlight on something and keeps its lamp clear (owner: a searchlight within the cat's body; 'attach these searchlights in a logical way')", () => {
     expect(plan.searchlights.length).toBeGreaterThanOrEqual(4);
-    for (const s of plan.searchlights) expect(plan.grid.hit(s.x, s.y + 0.6, s.z, 0.25), `a searchlight's lamp inside something at ${s.x},${s.y},${s.z}`).toBeNull();
+    for (const s of plan.searchlights) {
+      expect(plan.grid.hit(s.x, s.y + 0.6, s.z, 0.25), `a searchlight's lamp inside something at ${s.x},${s.y},${s.z}`).toBeNull();
+      const deck = s.y - 1.6;
+      if (s.mount.kind === 'top') expect(plan.grid.hit(s.x, deck - 0.4, s.z, 0.1), 'a deck on the top of a mast that stands').not.toBeNull();
+      if (s.mount.kind === 'mast') {
+        expect(s.mount.base).toBeLessThan(deck - 3);
+        if (s.mount.base > 0) expect(plan.grid.hit(s.x, s.mount.base - 0.3, s.z, 0.2), 'a lattice mast based on a roof').not.toBeNull();
+        expect(plan.grid.hit(s.x, (s.mount.base + deck) / 2, s.z, 0.4), 'the mast stands in the open').toBeNull();
+      }
+      if (s.mount.kind === 'ring') {
+        expect(plan.grid.hit(s.mount.cx, deck, s.mount.cz, 0.3), 'a ring about a solid at its height').not.toBeNull();
+        const d = Math.hypot(s.x - s.mount.cx, s.z - s.mount.cz);
+        expect(d).toBeGreaterThan(s.mount.r0); expect(d).toBeLessThan(s.mount.r1);
+      }
+    }
   });
 
   it('straddles the avenue with two gates: towers either side, a bridge building over the roads and the median, the avenue open beneath and above', () => {

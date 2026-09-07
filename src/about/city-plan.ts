@@ -213,8 +213,14 @@ export interface Rail {
   /** A portal frame's centre on the line, and the line's direction there (its legs stand at ±RAIL.leg). */
   portals: { x: number; z: number; dx: number; dz: number }[];
 }
-/** A searchlight's lamp: where it stands, its beam's length and colour, its phase in the sweep (the renderer sweeps it). */
-export interface Searchlight { x: number; y: number; z: number; len: number; color: string; phase: number }
+/** A searchlight's lamp: where it stands, its beam's length and colour, its phase in the sweep (the renderer sweeps it),
+ *  and its MOUNT (owner: "attach these searchlights in a logical way") — the lamp sits on a pivot on a railed deck whose
+ *  top is 1.6 below it, and the deck sits on the top of a mast that stands already, on a lattice mast from `base` (a
+ *  roof, the ground), or on a railed ring about a stack at (cx, cz) from radius r0 to r1. */
+export interface Searchlight {
+  x: number; y: number; z: number; len: number; color: string; phase: number;
+  mount: { kind: 'top' } | { kind: 'mast'; base: number } | { kind: 'ring'; cx: number; cz: number; r0: number; r1: number };
+}
 
 export interface Plan {
   rail: Rail;
@@ -2933,12 +2939,16 @@ export function planCity(seed: number): Plan {
   // -- THE SEARCHLIGHTS (the renderer sweeps a beam from each): on the stadium's masts, the megastructure, the wheel's
   // crown, the first stack --------------------------------------------------------------------------------------
   const searchlights: Searchlight[] = [
-    { x: stadium.masts[0].x, y: stadium.masts[0].h, z: stadium.masts[0].z, len: 150, color: '#dfeeff', phase: 0.3 },
-    { x: stadium.masts[3].x, y: stadium.masts[3].h, z: stadium.masts[3].z, len: 150, color: '#dfeeff', phase: 2.1 },
+    // the stadium's two lit masts: the deck on the mast's top, the lamp 1.6 above it
+    { x: stadium.masts[0].x, y: stadium.masts[0].h + 1.6, z: stadium.masts[0].z, len: 150, color: '#dfeeff', phase: 0.3, mount: { kind: 'top' } },
+    { x: stadium.masts[3].x, y: stadium.masts[3].h + 1.6, z: stadium.masts[3].z, len: 150, color: '#dfeeff', phase: 2.1, mount: { kind: 'top' } },
     // (no lamp on the summit tier: the cat sits there — a beam used to rise from under its chin)
-    { x: mgx - 20, y: mega.top - 28, z: mgz + 20, len: 140, color: '#ffd6e8', phase: 3.9 },
-    { x: wheel.x, y: wheel.y + wheel.r + 1, z: wheel.z, len: 120, color: '#fff0d0', phase: 0.8 },
-    ...stacks.slice(0, 1).map((s) => ({ x: s.x + 8, y: s.top - 6, z: s.z, len: 130, color: '#cfe6ff', phase: 4.6 })),
+    // the megastructure: a lattice mast on the second tier's north-west corner up to where the lamp always stood (it used to float off that corner)
+    { x: mgx - 15.5, y: mega.top - 28, z: mgz + 16.5, len: 140, color: '#ffd6e8', phase: 3.9, mount: { kind: 'mast', base: 74 } },
+    // the wheel: a mast from the ground west of the rim, the lamp above the crown (it used to float over the rim)
+    { x: wheel.x - 5.5, y: wheel.y + wheel.r + 1, z: wheel.z - 8, len: 120, color: '#fff0d0', phase: 0.8, mount: { kind: 'mast', base: 0 } },
+    // a stack: a railed maintenance ring six below its crown, the lamp on the ring (it used to float beside the chimney)
+    ...stacks.slice(0, 1).map((s) => ({ x: s.x + 2.7, y: s.top - 4.4, z: s.z, len: 130, color: '#cfe6ff', phase: 4.6, mount: { kind: 'ring' as const, cx: s.x, cz: s.z, r0: 1.4, r1: 3.6 } })),
   ];
 
   // -- the sprawl: past the outer ring, massing for the fog ------------------

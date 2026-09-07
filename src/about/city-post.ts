@@ -9,7 +9,7 @@
  *  (A motion-blur pass once streaked the frame by reprojection while the
  *  camera moved; the owner read it as a glow that followed the camera, and
  *  it is gone.) */
-import { HalfFloatType, ShaderMaterial, Vector3, WebGLRenderTarget, WebGLRenderer } from 'three';
+import { HalfFloatType, ShaderMaterial, Vector2, Vector3, WebGLRenderTarget, WebGLRenderer } from 'three';
 import { FullScreenQuad, Pass } from 'three/addons/postprocessing/Pass.js';
 
 /** A composer target in half floats (the bloom's headroom). */
@@ -84,6 +84,63 @@ export class LensPass extends Pass {
     (this.mat.uniforms.gLow.value as Vector3).set(low[0], low[1], low[2]);
     (this.mat.uniforms.gHigh.value as Vector3).set(high[0], high[1], high[2]);
     this.mat.uniforms.gContrast.value = contrast;
+  }
+
+  render(renderer: WebGLRenderer, writeBuffer: WebGLRenderTarget, readBuffer: WebGLRenderTarget): void {
+    this.mat.uniforms.tDiffuse.value = readBuffer.texture;
+    renderer.setRenderTarget(this.renderToScreen ? null : writeBuffer);
+    this.quad.render(renderer);
+  }
+
+  dispose(): void { this.mat.dispose(); this.quad.dispose(); }
+}
+
+const HAZE_FRAG = /* glsl */ `
+  uniform sampler2D tDiffuse;
+  uniform vec2 texel;
+  uniform float radius;
+  varying vec2 vUv;
+  void main() {
+    vec4 c = texture2D( tDiffuse, vUv );
+    float amt = 1.0 - c.a; // the fog of war's amount here (the fog chunk writes it; the sky and the city inside the fence carry 1)
+    if ( amt < 0.03 ) { gl_FragColor = vec4( c.rgb, 1.0 ); return; }
+    vec2 r = radius * amt * texel;
+    vec3 sum = c.rgb;
+    float wsum = 1.0;
+    for ( int i = 0; i < 12; i++ ) { // a Vogel disc of twelve taps
+      float a = float( i ) * 2.39996;
+      float rr = sqrt( ( float( i ) + 0.5 ) / 12.0 );
+      vec4 s = texture2D( tDiffuse, vUv + vec2( cos( a ), sin( a ) ) * rr * r );
+      float w = mix( 0.15, 1.0, clamp( ( 1.0 - s.a ) / amt, 0.0, 1.0 ) ); // a tap as far into the haze as this pixel counts in full; the sharp city barely
+      sum += s.rgb * w;
+      wsum += w;
+    }
+    gl_FragColor = vec4( sum / wsum, 1.0 );
+  }
+`;
+
+/** THE DISTANCE BLUR (owner: "fog of war and distance blur beyond boundaries — very natural and seamless"): the fog
+ *  chunk writes every opaque surface's fog-of-war amount into the frame's alpha; this pass, after the scene and before
+ *  the bloom, blurs each pixel over a small disc by its own amount, each tap weighted by its own amount against the
+ *  centre's, so the sharp city never smears into the haze and the haze never bleeds into the city. The bloom then
+ *  blooms the softened far lights softly. */
+export class HazePass extends Pass {
+  private readonly quad: FullScreenQuad;
+  private readonly mat: ShaderMaterial;
+
+  constructor() {
+    super();
+    this.mat = new ShaderMaterial({
+      uniforms: { tDiffuse: { value: null }, texel: { value: new Vector2(1 / 2, 1 / 2) }, radius: { value: 6 } },
+      vertexShader: VERT, fragmentShader: HAZE_FRAG, depthTest: false, depthWrite: false,
+    });
+    this.quad = new FullScreenQuad(this.mat);
+  }
+
+  /** The disc's radius at full amount: about 0.65 % of the frame's height. */
+  setSize(w: number, h: number): void {
+    (this.mat.uniforms.texel.value as Vector2).set(1 / Math.max(1, w), 1 / Math.max(1, h));
+    this.mat.uniforms.radius.value = Math.max(2, h * 0.0065);
   }
 
   render(renderer: WebGLRenderer, writeBuffer: WebGLRenderTarget, readBuffer: WebGLRenderTarget): void {

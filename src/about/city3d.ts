@@ -43,9 +43,9 @@ import { isMobile, reducedMotion } from '../lib/env';
 import { mulberry32 } from '../lib/rng';
 import {
   AirLane, ART_COLOR, ARTERIAL, ARTERIAL_ROW, arterialLat, ARTS, AutoFlight, bandPoint, bandPositions, BOUND, CAM_R, CANAL, DIAGONAL, EXT, G, HALF, HIGHWAY, HoloKind, LANE_CAR, LANE_W, OUTER,
-  carriagewayAt, CAT_TAIL, catTailBoxes, cityTiles, hasShop, planCity, Poi, RAIL, RAMP_W, rampY, ROAD, Sign, signColor, Solid, starPositions, streetAt, STREET, Street, tourRoute,
+  carriagewayAt, CAT_TAIL, catTailBoxes, cityTiles, hasShop, planCity, Poi, RAIL, RAMP_W, rampY, ROAD, Searchlight, Sign, signColor, Solid, starPositions, streetAt, STREET, Street, tourRoute,
 } from './city-plan';
-import { fov24, LensPass, lensTarget } from './city-post';
+import { fov24, HazePass, LensPass, lensTarget } from './city-post';
 import { CAST, People, Zone, marketZones } from './city-people';
 import { Runners } from './city-runners';
 import { blendLooks, ease, lerpHex, Look as SkyLook, LOOKS as SKY, paintSky, TimeOfDay } from './city-sky';
@@ -97,8 +97,18 @@ ShaderChunk.fog_fragment = /* glsl */ `
   // THE ENDLESS CITY (owner: the illusion of a city spanning infinite): the fog of war's wall at the fence is gone —
   // the city's own copies stand past it (city-plan's cityTiles) and the distance fog owns them; the last stretch
   // before the far plane fades out fully, so the plane never cuts a building
+  // THE FOG OF WAR, natural (owner: "I still need the fog of war and distance blur beyond boundaries — very natural
+  // and seamless"): past the fence the fog thickens with the distance OUT of the fence's square (its corners rounded:
+  // the distance to the square, not to its centre), whatever the eye's place — nothing moves with the eye, nothing
+  // stands like a wall — to near total nine hundred out; the last stretch before the far plane fades the rest. An
+  // opaque surface writes its amount into alpha for the haze pass, which blurs by it: the distance blur.
+  float beyond = smoothstep( 0.0, 900.0, length( max( abs( vFogWorld.xz ) - vec2( 280.0 ), 0.0 ) ) );
+  fogFactor = max( fogFactor, beyond * 0.985 );
   fogFactor = max( fogFactor, smoothstep( 1050.0, 1450.0, vFogDepth ) );
   gl_FragColor.rgb = mix( gl_FragColor.rgb, fogColor, fogFactor );
+  #ifdef OPAQUE
+    gl_FragColor.a = 1.0 - beyond;
+  #endif
 #endif`;
 
 /** ADDITIVE LIGHT IN FOG: a pool of lamplight, a headlight's throw, a
@@ -120,6 +130,8 @@ const FOG_ADD = /* glsl */ `
   // THE ENDLESS CITY (owner: the illusion of a city spanning infinite): the fog of war's wall at the fence is gone —
   // the city's own copies stand past it (city-plan's cityTiles) and the distance fog owns them; the last stretch
   // before the far plane fades out fully, so the plane never cuts a building
+  float beyond = smoothstep( 0.0, 900.0, length( max( abs( vFogWorld.xz ) - vec2( 280.0 ), 0.0 ) ) ); // the fog of war (see fog_fragment)
+  fogFactor = max( fogFactor, beyond * 0.985 );
   fogFactor = max( fogFactor, smoothstep( 1050.0, 1450.0, vFogDepth ) );
   gl_FragColor.rgb *= 1.0 - fogFactor;
 #endif`;
@@ -1279,7 +1291,9 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   };
   const composer = new EffectComposer(renderer, lensTarget(2, 2, isMobile() ? 0 : 4)); // (the desktop's scene pass is multisampled: see lensTarget)
   const lens = new LensPass();
+  const haze = new HazePass(); // the distance blur, by the fog of war's amount in the frame's alpha
   composer.addPass(new RenderPass(scene, camera));
+  composer.addPass(haze);
   const bloom = new UnrealBloomPass(new Vector2(2, 2), 0.62, 0.42, 0.4);
   composer.addPass(bloom);
   composer.addPass(lens);
@@ -1877,25 +1891,68 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   // -- SEARCHLIGHTS: volumetric-looking beams (an additive cone, a brighter
   // core) sweeping from the stadium's masts, the megastructure's top, the
   // industrial cranes and the wheel — the night's light shafts ------------------
-  interface Beam { g: Group; phase: number; rate: number; mats: MeshBasicMaterial[]; ops: number[]; len: number }
+  interface Beam { g: Group; yoke: Group; phase: number; rate: number; mats: MeshBasicMaterial[]; ops: number[]; len: number }
   const beams: Beam[] = [];
-  const beamAt = (x: number, y: number, z: number, len: number, color: string, phase: number) => {
+  // THE FIXTURES AND THEIR MOUNTS (owner: "build something to attach these searchlights in a logical way"): every lamp is
+  // a drum that turns with its beam, its lens face lit in the beam's colour, on a yoke that turns with the sweep, on a
+  // pivot on a railed deck 1.6 below the lamp — and the deck stands on the top of a mast that stands already, on a
+  // lattice mast from its base (a roof, the ground), or on a railed maintenance ring about a stack (the plan says which)
+  const FIX = new MeshLambertMaterial({ color: '#3a4152' }), FIX2 = new MeshLambertMaterial({ color: '#3a4152', side: DoubleSide }), RAILM = new MeshLambertMaterial({ color: '#8d97ad' });
+  const fixBox = (parent: Object3D, x: number, y: number, z: number, w: number, h: number, d: number, m: Material = FIX) => {
+    const b = new Mesh(geo.box, m); b.position.set(x, y, z); b.scale.set(w, h, d); b.castShadow = true; parent.add(b); return b;
+  };
+  /** A railed deck `size` square, its top at y, centred on (x, z). */
+  const deckAt = (x: number, y: number, z: number, size: number) => {
+    const g = new Group(); g.position.set(x, y, z); scene.add(g);
+    fixBox(g, 0, -0.09, 0, size, 0.18, size);
+    const h = size / 2 - 0.08;
+    for (const [px, pz] of [[-h, -h], [h, -h], [-h, h], [h, h]]) fixBox(g, px, 0.45, pz, 0.08, 0.9, 0.08, RAILM);
+    for (const k of [-1, 1]) { fixBox(g, 0, 0.9, k * h, size, 0.06, 0.06, RAILM); fixBox(g, k * h, 0.9, 0, 0.06, 0.06, size, RAILM); }
+  };
+  /** A lattice mast: four legs on a one-unit square, rungs every 2.4, from y0 up to y1. */
+  const latticeAt = (x: number, y0: number, z: number, y1: number) => {
+    const g = new Group(); g.position.set(x, 0, z); scene.add(g);
+    const H = y1 - y0;
+    for (const [px, pz] of [[-0.5, -0.5], [0.5, -0.5], [-0.5, 0.5], [0.5, 0.5]]) fixBox(g, px, y0 + H / 2, pz, 0.12, H, 0.12);
+    for (let y = y0 + 1.2; y < y1 - 0.4; y += 2.4) for (const k of [-1, 1]) { fixBox(g, 0, y, k * 0.5, 1.0, 0.08, 0.08); fixBox(g, k * 0.5, y, 0, 0.08, 0.08, 1.0); }
+  };
+  /** A railed ring about a stack: a flat annulus from r0 to r1, its top at y, posts and a rail about its rim. */
+  const ringAt = (cx: number, y: number, cz: number, r0: number, r1: number) => {
+    const g = new Group(); g.position.set(cx, y, cz); scene.add(g);
+    const deck = new Mesh(new RingGeometry(r0, r1, 28), FIX2); deck.rotation.x = -Math.PI / 2; deck.position.y = -0.05; deck.castShadow = true; g.add(deck);
+    for (let i = 0; i < 10; i++) { const a = (i / 10) * Math.PI * 2; fixBox(g, Math.cos(a) * (r1 - 0.1), 0.45, Math.sin(a) * (r1 - 0.1), 0.08, 0.9, 0.08, RAILM); }
+    const rail = new Mesh(new TorusGeometry(r1 - 0.1, 0.04, 6, 36), RAILM); rail.rotation.x = Math.PI / 2; rail.position.y = 0.9; g.add(rail);
+  };
+  const beamAt = (sl: Searchlight) => {
     const g = new Group();
-    g.position.set(x, y, z);
+    g.position.set(sl.x, sl.y, sl.z);
     const mats: MeshBasicMaterial[] = [];
-    for (const [r, op] of [[len * 0.075, 0.075], [len * 0.03, 0.12]] as [number, number][]) {
-      const geoC = new ConeGeometry(r, len, 12, 1, true);
-      geoC.translate(0, -len / 2, 0); // the apex at the lamp, the mouth far out
+    for (const [r, op] of [[sl.len * 0.075, 0.075], [sl.len * 0.03, 0.12]] as [number, number][]) {
+      const geoC = new ConeGeometry(r, sl.len, 12, 1, true);
+      geoC.translate(0, -sl.len / 2, 0); // the apex at the lamp, the mouth far out
       const m = new Mesh(geoC, new MeshBasicMaterial({
-        color, transparent: true, opacity: op, blending: AdditiveBlending, depthWrite: false, side: DoubleSide, fog: false,
+        color: sl.color, transparent: true, opacity: op, blending: AdditiveBlending, depthWrite: false, side: DoubleSide, fog: false,
       }));
       mats.push(m.material as MeshBasicMaterial);
       g.add(m);
     }
-    beams.push({ g, phase, rate: 0.0028 + (phase % 1) * 0.002, mats, ops: [0.075, 0.12], len });
+    // the drum about the beam's root (it pitches and turns with the beam), its face lit
+    const drum = new Mesh(geo.cyl, FIX); drum.scale.set(1.8, 1.5, 1.8); drum.position.y = -0.45; drum.castShadow = true; g.add(drum);
+    const face = new Mesh(new CircleGeometry(0.72, 16), new MeshBasicMaterial({ color: sl.color })); face.rotation.x = Math.PI / 2; face.position.y = -1.21; g.add(face); // (a circle faces +z: turned to face −y, the beam's way)
+    // the yoke: two arms from the pivot up to the axle, turning with the sweep only
+    const yoke = new Group(); yoke.position.set(sl.x, sl.y, sl.z); scene.add(yoke);
+    for (const k of [-1, 1]) fixBox(yoke, 0, -0.55, k * 1.12, 0.22, 1.1, 0.22);
+    fixBox(yoke, 0, 0, 0, 0.16, 0.16, 2.4); // the axle
+    const pivot = new Mesh(geo.cyl, FIX); pivot.scale.set(0.8, 0.5, 0.8); pivot.position.y = -1.35; pivot.castShadow = true; yoke.add(pivot);
+    // the deck and its mount
+    const deckY = sl.y - 1.6;
+    if (sl.mount.kind === 'ring') ringAt(sl.mount.cx, deckY, sl.mount.cz, sl.mount.r0, sl.mount.r1);
+    else deckAt(sl.x, deckY, sl.z, sl.mount.kind === 'top' ? 2.2 : 2.8);
+    if (sl.mount.kind === 'mast') latticeAt(sl.x, sl.mount.base, sl.z, deckY - 0.18);
+    beams.push({ g, yoke, phase: sl.phase, rate: 0.0028 + (sl.phase % 1) * 0.002, mats, ops: [0.075, 0.12], len: sl.len });
     scene.add(g);
   };
-  for (const s of plan.searchlights) beamAt(s.x, s.y, s.z, s.len, s.color, s.phase); // (the plan places them, tested clear of the solids and the cat)
+  for (const s of plan.searchlights) beamAt(s); // (the plan places and mounts them, tested clear of the solids and the cat, every mount on something)
   const beamDir = new Vector3(), beamTo = new Vector3();
   const sweep = () => {
     for (const b of beams) {
@@ -1903,6 +1960,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
       b.g.rotation.order = 'YXZ';
       // the cone hangs down −y; pitch it up toward the sky, then sweep about the mast
       b.g.rotation.set(0, t, Math.PI - (0.55 + Math.sin(t * 0.7) * 0.35));
+      b.yoke.rotation.y = t; // the yoke turns with the sweep; the drum pitches with the beam
       // a beam the eye is inside would wash the frame white: it thins as the eye nears its axis
       beamDir.set(0, -1, 0).applyEuler(b.g.rotation);
       beamTo.copy(camera.position).sub(b.g.position);
