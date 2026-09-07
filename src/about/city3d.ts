@@ -48,6 +48,7 @@ import {
 import { fov24, LensPass, lensTarget } from './city-post';
 import { CityAudio } from './city-audio';
 import { CAST, People, Zone } from './city-people';
+import { Runners } from './city-runners';
 import { blendLooks, ease, lerpHex, Look as SkyLook, LOOKS as SKY, paintSky, TimeOfDay } from './city-sky';
 import { Traffic, DECK_KERB, SPEC } from './city-traffic';
 import { ATLAS, CELLS, FAMILIES, FLOOR, heightToNormal, PX as SKIN_PX, SHOP, skinFor, tintJitter, UPPER, VARIANTS } from './city-skins';
@@ -562,19 +563,26 @@ function drawPerson(px: Px, L: Look, hair: Hair, extra: Look['extra'], f: number
       px(armL, ty + 1, 1, 3, sleeve); px(armR, ty + 1, 1, 3, sleeve);
       px(armL + 1, ty + 4, 1, 1, skin); px(armR - 1, ty + 4, 1, 1, skin);
       break;
+    case 8: arm(armL, ty - 1, 4); arm(armR, ty + 3, 3); break; // running: a big swing
+    case 9: // leaping: the arms up over the head
+      px(armL, ty - 3, 1, 3, sleeve); px(armL, ty - 3, 1, 1, skin); px(armR, ty - 3, 1, 3, sleeve); px(armR, ty - 3, 1, 1, skin);
+      break;
+    case 10: arm(armL, ty + 2, 3); arm(armR, ty + 2, 3); break; // on thrusters: the arms down and back
     default: arm(armL, ty + 1, 4); arm(armR, ty + 1, 4); break; // standing
   }
   // the legs, by the pose: apart, one lifted, together; a coat or a skirt over the top of them
   const legCol = L.shorts ? MK.skin : MK.bot;
   const legW = L.slim ? 1 : L.wide ? 3 : 2;
-  const [lx, rx] = f === 0 ? [bx - 1, bx + bodyW - legW + 1] : [bx, bx + bodyW - legW];
-  const lift = f === 1 ? 1 : 0;
-  px(lx, legsY, legW, 15 - legsY - lift, legCol); px(rx, legsY, legW, 15 - legsY, legCol);
+  const [lx, rx] = f === 0 || f === 8 ? [bx - 1, bx + bodyW - legW + 1] : [bx, bx + bodyW - legW];
+  const lift = f === 1 ? 1 : f === 8 ? 2 : 0; // (a runner's stride lifts a leg two)
+  const tuck = f === 9 ? 3 : 0; // (a leaper tucks the legs)
+  px(lx, legsY, legW, Math.max(1, 15 - legsY - lift - tuck), legCol); px(rx, legsY, legW, Math.max(1, 15 - legsY - tuck), legCol);
+  if (f === 10) px(bx, 15, bodyW, 1, MK.glow); // the thrusters' flame, in the figure's glow
   if (L.shorts) { px(lx, legsY, legW, 3, MK.bot); px(rx, legsY, legW, 3, MK.bot); }
   if (L.coat === 1) px(bx, legsY, bodyW, 3, MK.top);
   if (L.coat === 2) { px(bx, legsY, bodyW, 15 - legsY, MK.top); px(bx - 1, 13, bodyW + 2, 2, MK.top); }
   if (L.skirt) { px(bx, legsY, bodyW, 1, MK.top); px(bx - 1, legsY + 1, bodyW + 2, 2, MK.top); }
-  px(lx, 15 - lift, legW, 1, INK.shoe); px(rx, 15, legW, 1, INK.shoe);
+  px(lx, 15 - lift - tuck, legW, 1, INK.shoe); px(rx, 15 - tuck, legW, 1, INK.shoe);
   // their thing
   switch (extra) {
     case 'bag': px(Math.min(7, armR + 1), legsY - 2, 1, 2, INK.bag); break;
@@ -588,13 +596,13 @@ function drawPerson(px: Px, L: Look, hair: Hair, extra: Look['extra'], f: number
 function peopleTexture(): CanvasTexture {
   const ROWS = CAST.length * LOOKS_PER_KIND;
   const c = document.createElement('canvas');
-  c.width = 64; c.height = ROWS * 16;
+  c.width = 88; c.height = ROWS * 16; // eleven frames: the walkers' eight, the runners' run, leap and thrust
   const x = c.getContext('2d')!;
   CAST.forEach((kind, ki) => {
     const L = LOOKS[kind.name];
     for (let v = 0; v < LOOKS_PER_KIND; v++) {
       const hair = L.hair[v % 2], extra = v >= 2 ? L.extra : undefined;
-      for (let fr = 0; fr < 8; fr++) {
+      for (let fr = 0; fr < 11; fr++) {
         const ox = fr * 8, oy = (ki * LOOKS_PER_KIND + v) * 16;
         const px: Px = (fx, fy, w, h, col) => { // clipped to the cell
           const x0 = Math.max(0, fx), y0 = Math.max(0, fy), x1 = Math.min(8, fx + w), y1 = Math.min(16, fy + h);
@@ -3093,7 +3101,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
       .replace('#include <uv_vertex>', `
         vec3 bbRight = vec3( viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0] );
         float bbFlip = dot( bbRight, vec3( sin( aYaw ), 0.0, cos( aYaw ) ) ) < 0.0 ? 1.0 : 0.0;
-        vMapUv = vec2( ( mix( uv.x, 1.0 - uv.x, bbFlip ) + aFrame ) / 8.0, 1.0 - ( aRow + 1.0 - uv.y ) / ${ROWS}.0 );
+        vMapUv = vec2( ( mix( uv.x, 1.0 - uv.x, bbFlip ) + aFrame ) / 11.0, 1.0 - ( aRow + 1.0 - uv.y ) / ${ROWS}.0 );
         vTop = aTop; vBot = aBot; vHair = aHair; vSkin = aSkin; vGlow = aGlow;`)
       .replace('#include <begin_vertex>', `
         vec3 transformed = aPos + bbRight * position.x * 0.78 * aScale + vec3( 0.0, ( position.y + 0.5 ) * 1.55 * aScale, 0.0 );`);
@@ -3118,6 +3126,53 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   const peopleMesh = new Mesh(peopleGeo, peopleMat);
   peopleMesh.frustumCulled = false;
   scene.add(peopleMesh);
+  // PARKOUR (owner): sixty runners on the roofs (city-runners), drawn as the walkers are — hip-hop looks: a neon top,
+  // dark trousers, a cap, a glow for the thrusters' flame — and their sparks as points
+  const runners = new Runners(plan.roofs, plan.grid, mulberry32(seed ^ 0x9a7c0a), calm ? 30 : isMobile() ? 34 : 60);
+  const RUNNERS = runners.runners.length;
+  const rPos = new Float32Array(RUNNERS * 3), rFrame = new Float32Array(RUNNERS), rYaw = new Float32Array(RUNNERS), rRow = new Float32Array(RUNNERS), rScale = new Float32Array(RUNNERS);
+  const rTop = new Float32Array(RUNNERS * 3), rBot = new Float32Array(RUNNERS * 3), rHair = new Float32Array(RUNNERS * 3), rSkin = new Float32Array(RUNNERS * 3), rGlow = new Float32Array(RUNNERS * 3);
+  {
+    const NEON = ['#ff4fd8', '#5df2ff', '#C8FF00', '#ffd23f', '#ff8c42', '#b79cff'];
+    const SKINS = ['#f1c9a5', '#d9a06e', '#b47a4a', '#8a5a3a', '#f5d6bd', '#6e4630'];
+    const rr = mulberry32(seed ^ 0x51c0de);
+    const youth = CAST.map((k, i) => ({ k, i })).filter((q) => q.k.name !== 'elder' && q.k.name !== 'kid');
+    for (let i = 0; i < RUNNERS; i++) {
+      const pickKind = youth[Math.floor(rr() * youth.length)].i;
+      rRow[i] = pickKind * LOOKS_PER_KIND + Math.floor(rr() * LOOKS_PER_KIND); rScale[i] = 0.96 + rr() * 0.12;
+      new Color(pick(rr, NEON)).toArray(rTop, i * 3); new Color(rr() < 0.5 ? '#1a1a26' : '#2a2438').toArray(rBot, i * 3);
+      new Color(pick(rr, ['#101018', '#ff4fd8', '#5df2ff', '#ffffff'])).toArray(rHair, i * 3); new Color(pick(rr, SKINS)).toArray(rSkin, i * 3); new Color('#ffb347').toArray(rGlow, i * 3);
+    }
+  }
+  const runnerGeo = new InstancedBufferGeometry();
+  runnerGeo.index = peopleGeo.index; runnerGeo.setAttribute('position', peopleGeo.getAttribute('position')); runnerGeo.setAttribute('uv', peopleGeo.getAttribute('uv'));
+  runnerGeo.setAttribute('aPos', new InstancedBufferAttribute(rPos, 3)); runnerGeo.setAttribute('aFrame', new InstancedBufferAttribute(rFrame, 1)); runnerGeo.setAttribute('aYaw', new InstancedBufferAttribute(rYaw, 1));
+  runnerGeo.setAttribute('aRow', new InstancedBufferAttribute(rRow, 1)); runnerGeo.setAttribute('aScale', new InstancedBufferAttribute(rScale, 1));
+  runnerGeo.setAttribute('aTop', new InstancedBufferAttribute(rTop, 3)); runnerGeo.setAttribute('aBot', new InstancedBufferAttribute(rBot, 3)); runnerGeo.setAttribute('aHair', new InstancedBufferAttribute(rHair, 3));
+  runnerGeo.setAttribute('aSkin', new InstancedBufferAttribute(rSkin, 3)); runnerGeo.setAttribute('aGlow', new InstancedBufferAttribute(rGlow, 3));
+  runnerGeo.instanceCount = RUNNERS;
+  const runnerMesh = new Mesh(runnerGeo, peopleMat);
+  runnerMesh.frustumCulled = false;
+  scene.add(runnerMesh);
+  const sparkGeo = new BufferGeometry();
+  sparkGeo.setAttribute('position', new BufferAttribute(runners.trail.pos, 3));
+  sparkGeo.setAttribute('color', new BufferAttribute(runners.trail.col, 3));
+  const sparks = new Points(sparkGeo, new PointsMaterial({ vertexColors: true, size: 0.42, sizeAttenuation: true, transparent: true, blending: AdditiveBlending, depthWrite: false }));
+  sparks.frustumCulled = false; // the ring's bounds never update: culled by its first (empty) bounds it would vanish whenever the origin left the view
+  scene.add(sparks);
+  const runRoofs = () => {
+    runners.step();
+    for (let i = 0; i < RUNNERS; i++) {
+      const r = runners.runners[i];
+      rPos[i * 3] = r.x; rPos[i * 3 + 1] = r.y; rPos[i * 3 + 2] = r.z;
+      rFrame[i] = r.frame; rYaw[i] = r.yaw;
+    }
+    (runnerGeo.getAttribute('aPos') as InstancedBufferAttribute).needsUpdate = true;
+    (runnerGeo.getAttribute('aFrame') as InstancedBufferAttribute).needsUpdate = true;
+    (runnerGeo.getAttribute('aYaw') as InstancedBufferAttribute).needsUpdate = true;
+    (sparkGeo.getAttribute('position') as BufferAttribute).needsUpdate = true;
+    (sparkGeo.getAttribute('color') as BufferAttribute).needsUpdate = true;
+  };
   const walkPeople = () => {
     people.step();
     for (let i = 0; i < PEOPLE; i++) {
@@ -3810,6 +3865,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     timing.traffic = performance.now() - t0; t0 = performance.now();
     runTrains(); runCabs();
     if (!peopleSlow || tick % 2 === 0) { walkPeople(); peopleCost = performance.now() - t0; timing.people = peopleCost; } else timing.people = 0;
+    runRoofs();
     t0 = performance.now();
     fly();
     flyAir();
@@ -3818,7 +3874,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     timing.rest = performance.now() - t0;
     if (tick % 30 === 0) { const cost = timing.traffic + peopleCost; if (cost > 14) peopleSlow = true; else if (cost < 7) peopleSlow = false; }
   };
-  driveCars(); runTrains(); runCabs(); walkPeople(); fly(); flyAir(); playMatch(); cruiseCraft(); breathe();
+  driveCars(); runTrains(); runCabs(); walkPeople(); runRoofs(); fly(); flyAir(); playMatch(); cruiseCraft(); breathe();
   fit();
   if (typeof ResizeObserver !== 'undefined') new ResizeObserver(fit).observe(canvas);
 
@@ -3945,7 +4001,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     setTime: (t, instant = false) => { setTime(t, instant); render(); },
     time: () => timeNow,
     probe: () => ({
-      people: PEOPLE, cars: cars.length, flyers: FLYERS, fireworks: fw.launched, cat: plan.cat ? [plan.cat.x, plan.cat.y, plan.cat.z, plan.cat.w] : null, airKinds: flyers.reduce((m, fl) => ({ ...m, [fl.kind]: (m[fl.kind] ?? 0) + 1 }), {} as Record<string, number>), look: lookNow.label, blend: lookT, bleach: wallBleach.value,
+      people: PEOPLE, cars: cars.length, flyers: FLYERS, fireworks: fw.launched, runners: RUNNERS, rockets: runners.rockets, runnersAt: runners.runners.map((q) => [+q.x.toFixed(1), +q.y.toFixed(1), +q.z.toFixed(1), q.act]), runnerActs: runners.runners.reduce((m, q) => ({ ...m, [q.act]: (m[q.act] ?? 0) + 1 }), {} as Record<string, number>), cat: plan.cat ? [plan.cat.x, plan.cat.y, plan.cat.z, plan.cat.w] : null, airKinds: flyers.reduce((m, fl) => ({ ...m, [fl.kind]: (m[fl.kind] ?? 0) + 1 }), {} as Record<string, number>), look: lookNow.label, blend: lookT, bleach: wallBleach.value,
       knots: people.knots.filter((k) => k.members.length > 1).slice(0, 6).map((k) => [k.x, k.st.y, k.z, k.members.length]),
       air: flyers.slice(0, 6).map((fl) => [fl.x, fl.y, fl.z]),
       pads: flyers.filter((fl) => fl.pad).map((fl) => [fl.x, fl.y, fl.z, fl.stage === 'sit' ? 1 : 0]),

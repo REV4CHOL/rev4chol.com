@@ -229,6 +229,8 @@ export interface Plan {
   cat: { x: number; y: number; z: number; yaw: number; w: number } | null;
   /** Plazas where a crowd mills at ground level: the stadium's forecourt, the wheel's boarding station. */
   plazas: { x: number; z: number; w: number; d: number }[];
+  /** Every flat roof of the main city at least six square and eight up: the runners' ground (see city-runners). */
+  roofs: { x: number; z: number; w: number; d: number; top: number }[];
   leds: Strip[];
   awnings: Strip[];
   /** Tarpaulins over the shacks and the stalls, the washing on the balconies — lit dim, in their own colours. */
@@ -480,6 +482,7 @@ export function planCity(seed: number): Plan {
   const stages: Plan['stages'] = [];
   const gates: Plan['gates'] = [];
   const plazas: Plan['plazas'] = [];
+  const roofs: Plan['roofs'] = [];
   const extraBeacons: { x: number; y: number; z: number }[] = []; // (the gates', the canal's: joined to the beacons below)
   const subways: { x: number; z: number; rotY: number }[] = [];
   const piers: { x: number; z: number }[] = [];
@@ -886,6 +889,11 @@ export function planCity(seed: number): Plan {
   /** Every building ends here: an arcade along it perhaps, additions stacked on it, its signs, its balconies,
    *  its kit. `flat` says the roof at `h` is a flat roof an annex can stand on. */
   const finish = (fp: NonNullable<Foot>, h: number, top: number, capped: boolean, flat = true) => {
+    if ((bucket === core || bucket === outer) && fp.w >= 6 && fp.d >= 6 && h >= 8) { // the runners' ground, the whole city's: a roof mostly clear on top (the kit stands before this)
+      let clear = 0;
+      for (const [u, v] of [[0, 0], [-0.3, -0.3], [0.3, -0.3], [-0.3, 0.3], [0.3, 0.3]]) if (!grid.hit(fp.x + u * fp.w, h + 0.9, fp.z + v * fp.d, 0.6)) clear += 1;
+      if (clear >= (flat ? 2 : 3)) roofs.push({ x: fp.x, z: fp.z, w: fp.w, d: fp.d, top: h });
+    }
     const lowY = arcades(fp, h);
     const top2 = stackOn(fp, h, top, flat);
     dress(fp, h, top2, capped, lowY);
@@ -1679,7 +1687,7 @@ export function planCity(seed: number): Plan {
   // -- the stadium, the wheel, the megastructure, the temples, the industry ----
   const sx0 = streetAt(-5), sz0 = streetAt(3);
   const stadium = {
-    x: sx0, z: sz0, w: 58, d: 40, h: 13, // (owner: the base's north edge sat on the arterial's pavement — pulled back)
+    x: sx0, z: sz0, w: 58, d: 36, h: 13, // (owner: the base's north edge sat on the arterial's pavement — pulled back; the arterial skews, its pavement dips to 152 at the east end)
     masts: [[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([a, b]) => ({ x: sx0 + a * 27, z: sz0 + b * 20, h: 24 })),
     gates: [[0, -1, Math.PI], [1, 0, Math.PI / 2], [0, 1, 0], [-1, 0, -Math.PI / 2]].map(([a, b, rotY]) => ({ x: sx0 + a * 29.4, z: sz0 + b * 22.4, rotY })),
   };
@@ -2591,18 +2599,34 @@ export function planCity(seed: number): Plan {
   // cell eight wide beside a street holds the towers along it: it would have carried every lane over the roofs.)
   const canyonRun = (alongX: boolean, at: number, lat: number, y0: number, dir: 1 | -1): [number, number, number][] => {
     const pts: [number, number, number][] = [];
+    const bandClear = (x: number, y: number, z: number) => { for (let k = 0; k <= 12; k += 3) if (grid.hit(x, y + k, z, 2.0)) return false; return true; };
     for (let t = -REACH; t <= REACH + 0.5; t += 19) {
       const x = alongX ? t : at + lat, z = alongX ? at + lat : t;
       let y = y0;
       for (let tries = 0; tries < 30; tries++) {
         let clear = true;
-        for (let k = 0; k <= 12; k += 3) if (grid.hit(x, y + k, z, 2.0)) { clear = false; break; }
+        for (let s2 = 0; s2 < 19 && clear; s2 += 4.75) clear = bandClear(alongX ? x + s2 : x, y, alongX ? z : z + s2); // along the stretch to the next point
         if (clear) break;
         y += 4;
       }
       pts.push([x, y, z]);
     }
-    for (let pass = 0; pass < 4; pass++) for (let i = 0; i < pts.length; i++) { const prev = i > 0 ? pts[i - 1][1] : pts[i][1], next = i < pts.length - 1 ? pts[i + 1][1] : pts[i][1]; pts[i][1] = Math.max(pts[i][1], prev - 8, next - 8); }
+    const smooth = () => { for (let pass = 0; pass < 4; pass++) for (let i = 0; i < pts.length; i++) { const prev = i > 0 ? pts[i - 1][1] : pts[i][1], next = i < pts.length - 1 ? pts[i + 1][1] : pts[i][1]; pts[i][1] = Math.max(pts[i][1], prev - 8, next - 8); } };
+    smooth();
+    for (let round = 0; round < 8; round++) { // the lane SLOPES between two points: where a slope meets a solid its lower end rises
+      let dirty = false;
+      for (let i = 0; i + 1 < pts.length; i++) {
+        const a = pts[i], b = pts[i + 1];
+        if (a[1] === b[1]) continue;
+        for (let u = 0.25; u < 1; u += 0.25) {
+          if (bandClear(a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u)) continue;
+          if (a[1] < b[1]) a[1] += 4; else b[1] += 4;
+          dirty = true; break;
+        }
+      }
+      if (!dirty) break;
+      smooth();
+    }
     return dir > 0 ? pts : pts.reverse();
   };
   const canyonLoop = (alongX: boolean, at: number): [number, number, number][] => {
@@ -2610,17 +2634,25 @@ export function planCity(seed: number): Plan {
     const turnA: [number, number, number] = alongX ? [REACH + 16, 50, at] : [at, 50, REACH + 16], turnB: [number, number, number] = alongX ? [-REACH - 16, 50, at] : [at, 50, -REACH - 16];
     return [...out, turnA, ...back, turnB];
   };
-  // the lines that stay OPEN across the core carry the lanes (a closed segment — a merge, a superblock, a feature — is
-  // built over, and a tower on the line would send the lane over the roofs): the four least closed each way, spread out
+  // the lines that stay LOW across the city carry the lanes: every line's loop is profiled, and the four that climb the
+  // least each way, spread out, are kept (a closed segment — a merge, a superblock, a feature — is built over, and a
+  // tower over the line would send the lane over the roofs: the profile says so; the closures break the ties)
   const closedAlong = (i: number, ns: boolean) => { let n = 0; for (let j = -HALF; j <= HALF; j++) if (!(ns ? openZ(i, j) : openX(i, j))) n += 1; return n; };
+  const loops = new Map<string, [number, number, number][]>();
+  const loopFor = (ns: boolean, i: number) => { const k = `${ns}:${i}`; let l = loops.get(k); if (!l) { l = canyonLoop(!ns, streetAt(i)); loops.set(k, l); } return l; };
   const pickLines = (ns: boolean): number[] => {
-    const cands = [-7, -6, -5, -4, -3, -2, 2, 3, 4, 5, 6].map((i) => ({ i, closed: closedAlong(i, ns) })).sort((a, b) => a.closed - b.closed || Math.abs(Math.abs(a.i) - 4.5) - Math.abs(Math.abs(b.i) - 4.5));
+    const cands = [-7, -6, -5, -4, -3, -2, 2, 3, 4, 5, 6].map((i) => {
+      const pts = loopFor(ns, i);
+      let top = 0, climb = 0;
+      for (const p of pts) { top = Math.max(top, p[1]); climb += Math.max(0, p[1] - 54); }
+      return { i, score: top + climb / pts.length, closed: closedAlong(i, ns) };
+    }).sort((a, b) => a.score - b.score || a.closed - b.closed || Math.abs(Math.abs(a.i) - 4.5) - Math.abs(Math.abs(b.i) - 4.5));
     const out: number[] = [];
     for (const c of cands) { if (out.some((o) => Math.abs(o - c.i) < 2)) continue; out.push(c.i); if (out.length === 4) break; }
     return out;
   };
-  for (const i of pickLines(true)) air.push({ kind: 'canyon', loop: true, speed: 0.36, pts: canyonLoop(false, streetAt(i)) }); // north–south lines
-  for (const i of pickLines(false)) air.push({ kind: 'canyon', loop: true, speed: 0.36, pts: canyonLoop(true, streetAt(i)) }); // east–west lines
+  for (const i of pickLines(true)) air.push({ kind: 'canyon', loop: true, speed: 0.36, pts: loopFor(true, i) }); // north–south lines
+  for (const i of pickLines(false)) air.push({ kind: 'canyon', loop: true, speed: 0.36, pts: loopFor(false, i) }); // east–west lines
   // a second ring, higher and wider, and two cross-city arcs high over everything
   const ring2: [number, number, number][] = [];
   for (let i = 0; i < 14; i++) { const a = (i / 14) * Math.PI * 2; ring2.push([Math.cos(a) * 300, 132, Math.sin(a) * 300]); }
@@ -2767,7 +2799,7 @@ export function planCity(seed: number): Plan {
   return {
     core, outer, sprawl, strips, leds, awnings, tarps, clutter, billboards, spots, signs, posts, lanterns, wires, vents, holos, stalls, sprawlLamps, neon,
     beacons, pois, streets, stadium, wheel, mega, stacks, bridges, styles, sprawlTex, grid, landmark, roomAhead, air, pads, rail, piers, patches, parked, poles, superblocks, doors, lifts, subways,
-    parties, perches, stages, gates, fireworks, cat, plazas,
+    parties, perches, stages, gates, fireworks, cat, plazas, roofs,
   };
 }
 

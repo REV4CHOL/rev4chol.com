@@ -89,7 +89,7 @@ describe('planCity', () => {
       for (const [, y] of l.pts) { expect(y).toBeGreaterThanOrEqual(46); expect(y).toBeLessThan(130); }
       expect(l.pts.filter((p) => p[1] <= 62).length / l.pts.length).toBeGreaterThan(0.6);
     }
-    expect(plan.air.length).toBe(5);
+    expect(plan.air.length).toBe(16); // the avenues, two rings, two arcs, eight canyon lanes, two patrols
     expect(plan.pads.length).toBe(6);
     for (const lane of plan.air) {
       const n = lane.pts.length;
@@ -99,7 +99,7 @@ describe('planCity', () => {
           const t = k / 24;
           const x = ax + (bx - ax) * t, y = ay + (by - ay) * t, z = az + (bz - az) * t;
           if (Math.abs(x) > EXT + G || Math.abs(z) > EXT + G) continue;
-          expect(plan.grid.hit(x, y, z, 2.5), `${lane.kind} corridor at ${x.toFixed(0)},${y.toFixed(0)},${z.toFixed(0)}`).toBeNull();
+          expect(plan.grid.hit(x, y, z, lane.kind === 'canyon' ? 1.9 : 2.5), `${lane.kind} corridor at ${x.toFixed(0)},${y.toFixed(0)},${z.toFixed(0)}`).toBeNull();
         }
       }
     }
@@ -457,10 +457,15 @@ describe('The viaduct over its arterial (owner: roads that exist in real life)',
     }
   });
 
+  it('lists the flat roofs for the runners', () => {
+    expect(plan.roofs.length).toBeGreaterThan(400);
+    for (const r of plan.roofs.slice(0, 200)) { expect(r.w).toBeGreaterThanOrEqual(6); expect(r.d).toBeGreaterThanOrEqual(6); expect(r.top).toBeGreaterThanOrEqual(8); }
+  });
+
   it('gives the stadium a forecourt and two entrances and the wheel a boarding station, crowds in both, the arterial\'s pavement clear of the base', () => {
     expect(plan.plazas.length).toBe(2);
     const st = plan.stadium;
-    expect(st.d).toBe(40);
+    expect(st.d).toBe(36);
     for (let x = st.x - 20; x <= st.x + 20; x += 5) expect(plan.grid.hit(x, 0.9, arterialZ(x) - ARTERIAL_ROW + 1.3, 0.3), 'the arterial pavement by the stadium').toBeNull();
     expect(plan.doors.some((d) => Math.abs(d.x - st.x) < 1 && Math.abs(d.z - (st.z - st.d / 2 - 2.6)) < 1)).toBe(true); // the south forecourt's turnstiles
     expect(plan.doors.some((d) => Math.abs(d.x - st.x) < 1 && Math.abs(d.z - (st.z + st.d / 2 + 0.4)) < 1)).toBe(true); // the north entrance off the arterial
