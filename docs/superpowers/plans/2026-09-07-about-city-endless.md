@@ -44,4 +44,4 @@ longer drawn.
 
 ## Status
 
-Built 2026-09-07 (commit recorded in the spec's "As built").
+Built 2026-09-07 (d6c86f0).

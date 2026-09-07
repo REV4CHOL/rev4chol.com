@@ -54,7 +54,7 @@ from the air, the city ended: a fog-coloured plain with a painted silhouette on 
 
 ## As built
 
-Commit HASH, 2026-09-07. Built as designed, with two findings on the way:
+Commit d6c86f0, 2026-09-07. Built as designed, with two findings on the way:
 
 - The copies came out as fog-coloured silhouettes at every distance, whatever material they wore. The cause was not
   the skin shader (a plain standard material was as dark) nor the geometry (a red unlit material showed the masses

@@ -183,7 +183,7 @@ half-resolution pixel count), adapting to the frame (down a fifth while a render
 floor 0.6× CSS); rvlRide.quality() reports the scale and the buffer. Measured in the pane at 375 × 812, ratio 2:
 469 × 1015, 8.5 ms a render.
 
-## Follow-up 3 (2026-09-07, HASH): the runners' pace, the sound, the cat, the tagline, the PC's pixels, the works zoom
+## Follow-up 3 (2026-09-07, d6c86f0): the runners' pace, the sound, the cat, the tagline, the PC's pixels, the works zoom
 
 Owner, in two messages. First: "reduce number of rooftop runners, down to 150 pls. And reduce their jumping
 frequency, make it slower. Remove completely SFX from the city. Orange cat's tail is clipping through the building
