@@ -770,14 +770,14 @@ describe('Plain borders (owner: no river, boulevard or highway outside the borde
     const counted = [...plan.core, ...plan.outer].filter((s) => isMass(s) && !LANDMARK_ARCH.has(s.arch) && s.h >= 4 && s.kind !== 'tree' && s.arch !== 'street');
     let overlaps = 0;
     for (const f of plan.filler) {
-      expect(f.kind).toBe('facade'); expect(f.h).toBeGreaterThan(3); // (a set-back upper box is three-tenths of its base)
+      expect(f.kind).toBe('facade'); if (Math.abs(f.y - f.h / 2) < 0.01) expect(f.h, 'a base box').toBeGreaterThan(4); // (a set-back upper box is three-tenths of its base)
       expect(Math.max(Math.abs(f.x) + f.w / 2, Math.abs(f.z) + f.d / 2), 'inside the built square').toBeLessThan(TILE_P / 2 + 0.01);
       for (const m of counted) if (Math.min(f.x + f.w / 2, m.x + m.w / 2) - Math.max(f.x - f.w / 2, m.x - m.w / 2) > 1.5 && Math.min(f.z + f.d / 2, m.z + m.d / 2) - Math.max(f.z - f.d / 2, m.z - m.d / 2) > 1.5) overlaps++;
     }
     expect(overlaps, 'a filler box over a counted mass').toBe(0);
     const near = (x: number, z: number, r: number) => plan.filler.some((f) => Math.abs(f.x - x) < r && Math.abs(f.z - z) < r);
     expect(near(0, 0, 14), 'the plaza').toBe(true);
-    for (let b = 1; b <= HALF; b++) { expect(near(0, b * G, 14), `the canal column at bz=${b}`).toBe(true); expect(near(b * G, 0, 14), `the tree avenue at bx=${b}`).toBe(true); }
+    for (let b = 1; b <= HALF; b++) { expect(near(0, b * G, 14), `the canal column at bz=${b}`).toBe(true); if (b !== 4) expect(near(b * G, 0, 14), `the tree avenue at bx=${b}`).toBe(true); } // (the gates stand over the avenue at ±4: their bridge building is copied)
     expect(near(CITADEL.x, CITADEL.z, 40), 'the citadel block').toBe(true);
     expect(near((CITADEL.x - 24), (CITADEL.z - 24) - 2 * G, 60) || near(-190, -76, 20) || near(-76, -190, 20), 'along the boulevard').toBe(true);
   });
