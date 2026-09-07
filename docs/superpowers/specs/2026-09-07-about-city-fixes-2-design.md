@@ -139,3 +139,30 @@ every kind of kit was surveyed.
 **Tests.** 210 across 24 files (3 skipped). Live: the site boots with the new build; the deploy runs green.
 
 **Note.** GitHub reports the repository moved to `REV4CHOL/rev4chol.com`; pushes to the old name still redirect.
+
+## Follow-up (2026-09-07, cb4a226): crowds where nobody would stand; pixel clouds
+
+Owner: "random groups of NPC in illogical places (rooftop, literally in the middle of road traffic lanes)" and "clouds
+should be pixels, not realistic clouds". Four causes of the crowds, all fixed:
+
+- the market zones clustered stalls within thirty of one another ACROSS the arterial (the aprons' stalls either side),
+  so a zone spanned its carriageway and its crowd milled among the buses — `marketZones` (city-people, shared with the
+  test) never clusters across a carriageway; milling and placing in a zone respect roads and walls (`onRoad`, `solid`);
+- a knot of talk stood on a pavement line where a cross street ran through the junction — knots retry off every
+  carriageway, and nobody pauses or sits in a crossing's mouth;
+- the rooftop parties' crowds — the parties keep their lights and lose their people;
+- the runners danced 99 % of the time (a first choice that found no roof meant a dance) — they try the next kind of
+  flight, run more, dance for a few seconds: about 60 % on the move at any moment.
+
+The traffic's stop line is angle-aware now (`boxFor` uses `reachAlong`, as the paint does): at the boulevard's crossings
+the lanes used to stop inside its carriageway. The painted zebra sits back at the corner's line, where the walkers
+cross, and the stop line just past where the vehicles stop (the earlier round had moved the paint out without moving
+the vehicles: they stopped on the zebras). The boulevard's crossings run longer cycles, as the arterial's do.
+
+Clouds: a 48 × 20 bitmap of overlapping discs in three flat tones (a lit crown, the body, a dark belly, the underside
+sheared flat), alpha 0 or 1, nearest magnification, near solid — six units of sky a texel on a puff 300 wide.
+
+Tests: zones never straddle a carriageway (every zone sampled 7 × 7); nobody milling, browsing, talking, standing or
+vending stands on a road (alleys and the narrow lanes excepted — a knot at a lane's edge spills a step into it, Hanoi)
+or above the ground (catwalks excepted); at the oblique nodes no lane ends inside another carriageway; most of three
+hundred runners on the move. 213 tests across 24 files.

@@ -61,3 +61,4 @@
 - [x] Task F — d1ee5be `feat(about): the ramps cut, the undercroft built`.
 - [x] Task G — c6c4445 `feat(about): parkour everywhere` (the deck survey found nothing across it; the carriageway is asserted clear).
 - [x] Task H — this commit: the spec's as-built section, this status, the memory entry; deploy verified.
+- [x] Follow-up — cb4a226 `fix(about): no crowd where nobody would stand; pixel clouds` (market zones off the roads, knots and pauses off the crossings, no roof crowds, runners on the move, the stop line angle-aware, pixel clouds).
