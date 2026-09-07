@@ -1,5 +1,6 @@
 import gsap from 'gsap';
 import { reducedMotion } from './env';
+import { music } from './music';
 import { sound } from './sound';
 
 const SLICES = 7;
@@ -28,6 +29,7 @@ export function leaveTo(href: string): void {
   const wipe = ensureWipe();
   const slices = wipe.querySelectorAll('.wipe-slice');
   sound.whoosh();
+  music.leave(); // (its place saved; a short fade under the wipe — the next page picks it up there)
   // failsafe: a stalled navigation must not leave the page latched behind a
   // covered wipe with `leaving` stuck true — self-heal after 4s
   const t = window.setTimeout(() => {

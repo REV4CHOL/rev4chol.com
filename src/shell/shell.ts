@@ -1,5 +1,6 @@
 import type { SiteContent } from '../lib/content';
 import { escapeHtml } from '../lib/escape';
+import { music } from '../lib/music';
 import { sound } from '../lib/sound';
 import { initTransitions } from '../lib/transitions';
 import { initCursor } from './cursor';
@@ -58,10 +59,9 @@ export function mountShell(site: SiteContent, active: PageKey): ShellRefs {
   // propagate the gesture, so sound flows page to page); hover blips on
   // interactives.
   sound.init();
-  // the room tone runs site-wide: the site is audible from the earliest
-  // moment the browser permits (first gesture, or activation carried over
-  // from a same-origin navigation)
-  sound.onUnlock(() => sound.startHum());
+  // MUSIC (owner): started in page.ts ahead of the boot screen; a cold load plays at the first gesture, wired here.
+  // (The ambient room tone is gone: owner.)
+  for (const ev of ['pointerdown', 'keydown', 'touchend']) document.addEventListener(ev, () => music.gesture(), { passive: true });
   document.addEventListener('pointerover', (e) => {
     if ((e.target as Element).closest?.('a, button')) sound.hover();
   });

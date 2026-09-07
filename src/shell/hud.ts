@@ -1,4 +1,5 @@
 import { calmActive, toggleCalm } from '../lib/motion';
+import { music } from '../lib/music';
 import { sound } from '../lib/sound';
 
 export interface Hud {
@@ -25,7 +26,7 @@ export function mountHud(): Hud {
 
   const tr = document.createElement('div');
   tr.className = 'hud hud-tr micro';
-  tr.innerHTML = `<span id="hud-count"></span> <button id="hud-snd" aria-pressed="${sound.enabled}">SND ${sound.enabled ? '●' : '○'}</button> <button id="hud-mtn" aria-pressed="${!calmActive()}" title="Motion: full / calm">MTN ${calmActive() ? '○' : '●'}</button>`;
+  tr.innerHTML = `<span id="hud-count"></span> <button id="hud-snd" aria-pressed="${sound.enabled}">SND ${sound.enabled ? '●' : '○'}</button> <button id="hud-mus" aria-pressed="${music.enabled}" title="Music: on / off">MUS ${music.enabled ? '●' : '○'}</button> <button id="hud-mtn" aria-pressed="${!calmActive()}" title="Motion: full / calm">MTN ${calmActive() ? '○' : '●'}</button>`;
 
   document.body.append(bl, br, tr);
 
@@ -45,10 +46,16 @@ export function mountHud(): Hud {
     snd.setAttribute('aria-pressed', String(on));
     if (on) {
       sound.click(); // audible confirmation — re-enabling must be heard
-      sound.startHum();
     }
   });
 
+  const mus = tr.querySelector('#hud-mus') as HTMLButtonElement; // MUSIC (owner): the one track, site-wide, its own switch
+  mus.addEventListener('click', () => {
+    const on = music.toggle();
+    mus.textContent = `MUS ${on ? '●' : '○'}`;
+    mus.setAttribute('aria-pressed', String(on));
+    sound.click();
+  });
   const mtn = tr.querySelector('#hud-mtn') as HTMLButtonElement;
   mtn.addEventListener('click', () => {
     toggleCalm();

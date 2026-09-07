@@ -4,6 +4,7 @@ import '../styles/components.css';
 import { loadSite, SiteContent } from '../lib/content';
 import { BootTask, runBoot } from './boot';
 import { Hud } from './hud';
+import { music } from '../lib/music';
 import { mountShell, PageKey } from './shell';
 
 export interface PageCtx { site: SiteContent; hud: Hud }
@@ -50,6 +51,10 @@ export function startPage(
     },
     ...extraTasks,
   ];
+  // MUSIC (owner: one track on every page, continuous, never restarting; a loading screen never cuts it): it starts
+  // here, before the boot screen, where the last page left it; its place is saved as the page goes
+  music.init();
+  window.addEventListener('pagehide', () => music.save());
   runBoot(tasks)
     .then(async () => {
       const site = await loadSite();

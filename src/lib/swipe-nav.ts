@@ -8,6 +8,7 @@
  * unit-tested); `armGlideNav` is the one DOM armer, called per page.
  */
 import { reducedMotion } from './env';
+import { music } from './music';
 import { sound } from './sound';
 import { leaveTo } from './transitions';
 
@@ -164,6 +165,7 @@ export function armGlideNav(opts: GlideOptions): void {
     document.body.style.transform = `translateY(${dir > 0 ? '-108vh' : '108vh'})`;
     // the slide IS the page transition — navigate as it completes (a timeout,
     // not transitionend: throttled tabs must still leave)
+    music.leave(200);
     window.setTimeout(() => { location.href = stop.href; }, 250);
   };
 

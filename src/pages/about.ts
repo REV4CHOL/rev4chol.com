@@ -1,4 +1,5 @@
 import { AboutContent, loadAbout, SiteContent } from '../lib/content';
+import { music } from '../lib/music';
 import { escapeHtml } from '../lib/escape';
 import { armPosterLock } from '../lib/poster-lock';
 import { LOOKS, nextTime, parseTime, TimeOfDay, TIMES } from '../about/city-sky';
@@ -52,6 +53,7 @@ function startTime(): TimeOfDay {
 async function armFlight(site: SiteContent): Promise<void> {
   const canvas = document.getElementById('a3c') as HTMLCanvasElement | null;
   if (!canvas) return;
+  await music.ready(); // (the build holds the main thread: the music is audibly on before it — a loading screen never cuts it)
   const { mountCity3D } = await import('../about/city3d');
   const ride = mountCity3D(canvas, hashSlug('revachol-night-city'));
   // THE FILM LAYERS OFF THE CITY (owner: "the whole city is having this window glitch" — the site's grain, a 1:1 noise

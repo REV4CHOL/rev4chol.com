@@ -98,7 +98,6 @@ startPage(
 
     paint();
     await mount(active);
-    sound.onUnlock(() => sound.startHum());
 
     window.addEventListener('keydown', (e) => {
       if (!world) return;

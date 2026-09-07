@@ -4,8 +4,6 @@ class SoundEngine {
   enabled = true;
   private master: GainNode | null = null;
   private analyser: AnalyserNode | null = null;
-  private hum: { gain: GainNode; stop: () => void } | null = null;
-  private humTeardown: { timer: ReturnType<typeof setTimeout>; stop: () => void } | null = null;
   private unlockCbs: (() => void)[] = [];
   private armed = false;
   /** On touch devices the bus exits through this element (see ensureCtx). */
@@ -276,54 +274,11 @@ class SoundEngine {
     src.start(t);
   }
 
-  startHum(): void {
-    if (!this.enabled || this.hum) return;
-    if (this.humTeardown) {
-      clearTimeout(this.humTeardown.timer);
-      this.humTeardown.stop();
-      this.humTeardown = null;
-    }
-    const ctx = this.ctx();
-    const out = this.out();
-    if (!ctx || !out) return;
-    // 160Hz cutoff, not 65: small laptop speakers roll off below ~150Hz and
-    // rendered the old hum physically inaudible
-    const src = ctx.createBufferSource();
-    src.buffer = this.noiseBuffer(ctx, 2);
-    src.loop = true;
-    const lp = ctx.createBiquadFilter();
-    lp.type = 'lowpass';
-    lp.frequency.value = 160;
-    const g = ctx.createGain();
-    g.gain.value = 0;
-    g.gain.linearRampToValueAtTime(0.09, ctx.currentTime + 1.2);
-    const lfo = ctx.createOscillator();
-    lfo.frequency.value = 0.11;
-    const lfoG = ctx.createGain();
-    lfoG.gain.value = 0.03;
-    lfo.connect(lfoG).connect(g.gain);
-    src.connect(lp).connect(g).connect(out);
-    src.start();
-    lfo.start();
-    this.hum = { gain: g, stop: () => { src.stop(); lfo.stop(); } };
-  }
-
-  stopHum(): void {
-    if (!this.hum) return;
-    if (ctxRef) this.hum.gain.gain.linearRampToValueAtTime(0, ctxRef.currentTime + 0.4);
-    const h = this.hum;
-    this.hum = null;
-    const timer = setTimeout(() => {
-      h.stop();
-      this.humTeardown = null;
-    }, 500);
-    this.humTeardown = { timer, stop: h.stop };
-  }
+  // (the ambient room tone — a filtered noise hum — is gone: owner, "remove the ambient background sound")
 
   toggle(): boolean {
     this.enabled = !this.enabled;
     try { localStorage.setItem('rvl-sound-v2', this.enabled ? 'on' : 'off'); } catch { /* ok */ }
-    if (!this.enabled) this.stopHum();
     return this.enabled;
   }
 
@@ -335,10 +290,6 @@ class SoundEngine {
     let sum = 0;
     for (const v of d) { const c = (v - 128) / 128; sum += c * c; }
     return Math.sqrt(sum / d.length);
-  }
-
-  humOn(): boolean {
-    return this.hum !== null;
   }
 
   /** The bus, for a page that synthesises its own ambience (the about
@@ -373,7 +324,6 @@ if (typeof window !== 'undefined') {
   (window as unknown as { rvlSound: unknown }).rvlSound = {
     state: () => sound.state(),
     level: () => sound.level(),
-    humOn: () => sound.humOn(),
     test: () => sound.click(),
     route: () => sound.route(),
   };

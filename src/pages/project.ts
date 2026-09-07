@@ -5,6 +5,7 @@ import { mulberry32 } from '../lib/rng';
 import { escapeHtml } from '../lib/escape';
 import { armPosterLock, posterZoom } from '../lib/poster-lock';
 import { scrambleEl } from '../lib/scramble';
+import { music } from '../lib/music';
 import { sound } from '../lib/sound';
 import { hashSlug, stillSlotUrls, wallRhythm } from '../project/dossier';
 import { armStamps } from '../lib/stamps';
@@ -250,6 +251,7 @@ function mountSynopsis(p: Project): void {
   watch.addEventListener('click', () => {
     watch.hidden = true;
     player.hidden = false;
+    music.hold(); // WATCH (owner): the music stops, and stays stopped until the next section or page
     armEffectHole('player', player);
     sound.zap();
     if (p.film!.type === 'local') {
