@@ -1777,6 +1777,48 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     scene.add(horse);
     lampHeads.push(paving);
   }
+  // -- THE CAT (owner: a giant orange cat sitting on one of the skyscrapers in the centre): boxes of orange and cream on
+  // the roof the plan chose, sitting up, forepaws together, tail curling over the parapet and down the wall; a lit
+  // green gaze. It blinks, turns its head and swishes its tail now and then (calm: still). Two warm practicals below.
+  const catRig = { head: null as Group | null, tail: null as Group | null, eyes: [] as Mesh[] };
+  if (plan.cat) {
+    const c = plan.cat, u = c.w / 16; // sixteen units of roof carry a cat sixteen wide
+    const fur = new MeshLambertMaterial({ color: '#ff8a3d', emissive: '#4a2408', emissiveIntensity: 0.5 });
+    const cream = new MeshLambertMaterial({ color: '#ffe3c2', emissive: '#4a3a24', emissiveIntensity: 0.4 });
+    const stripe = new MeshLambertMaterial({ color: '#c85a18', emissive: '#3a1a06', emissiveIntensity: 0.4 });
+    const pink = new MeshLambertMaterial({ color: '#ff9fb0', emissive: '#40202a', emissiveIntensity: 0.4 });
+    const eye = new MeshBasicMaterial({ color: '#9dffb8' });
+    const cat = new Group();
+    const part = (g: Group, x: number, y: number, z: number, w: number, h: number, d: number, m: Material, rx = 0, ry = 0, rz = 0) => {
+      const b = new Mesh(new BoxGeometry(w * u, h * u, d * u), m); b.position.set(x * u, y * u, z * u); b.rotation.set(rx, ry, rz); b.castShadow = true; b.receiveShadow = true; g.add(b); return b;
+    };
+    part(cat, 0, 2.3, -1.2, 7.4, 4.6, 6.4, fur); // the haunches, planted
+    for (const y of [1.2, 2.4, 3.6]) part(cat, 0, y, -1.2, 7.6, 0.4, 6.6, stripe); // the tabby bands
+    part(cat, 0, 6.2, 0.2, 5.6, 6.4, 4.8, fur); // the body rising to the chest
+    part(cat, 0, 6.6, 0.4, 5.8, 0.4, 5.0, stripe);
+    part(cat, 0, 5.4, 2.7, 3.4, 5.0, 0.5, cream); // the bib
+    for (const sx of [-1, 1]) { // the hind paws out to the side, the forelegs straight down before the chest
+      part(cat, sx * 2.9, 0.55, 1.4, 1.7, 1.1, 2.8, fur);
+      part(cat, sx * 1.8, 2.6, 2.6, 1.5, 5.2, 1.5, fur);
+      part(cat, sx * 1.8, 0.55, 3.1, 1.6, 1.1, 2.3, cream);
+    }
+    const head = new Group(); head.position.set(0, 10.2 * u, 0.8 * u); cat.add(head); catRig.head = head;
+    part(head, 0, 0, 0, 4.6, 4.0, 4.0, fur);
+    part(head, 0, 1.4, 0, 4.8, 0.4, 4.2, stripe);
+    part(head, 0, -0.9, 2.2, 2.4, 1.5, 1.0, cream); // the muzzle
+    part(head, 0, -0.35, 2.75, 0.7, 0.5, 0.5, pink); // the nose
+    for (const sx of [-1, 1]) {
+      catRig.eyes.push(part(head, sx * 1.15, 0.55, 2.02, 1.0, 0.75, 0.2, eye)); // the eyes, lit
+      part(head, sx * 1.55, 2.6, -0.2, 1.3, 1.7, 0.6, fur, 0, 0, sx * -0.28); // the ears
+      part(head, sx * 1.5, 2.5, 0.12, 0.6, 1.0, 0.2, pink, 0, 0, sx * -0.28);
+      for (const k of [-0.25, 0.15]) part(head, sx * 2.9, -0.7 + k, 2.2, 2.6, 0.07, 0.07, cream, 0, 0, sx * (0.35 + k)); // the whiskers
+    }
+    const tail = new Group(); tail.position.set(2.6 * u, 1.6 * u, -3.9 * u); cat.add(tail); catRig.tail = tail;
+    const bends: [number, number, number, number][] = [[0.3, 0.3, -0.5, 0.2], [1.1, -0.5, -0.9, 0.6], [1.6, -1.9, -0.9, 1.1], [1.6, -3.5, -0.6, 1.5], [1.2, -5.0, -0.1, 1.8], [0.6, -6.3, 0.5, 2.0]];
+    bends.forEach(([x, y, z, r], k) => part(tail, x, y, z, 1.1, 1.8, 1.1, k === bends.length - 1 ? cream : k % 2 ? stripe : fur, 0, 0, r)); // curling over the parapet and down the wall
+    cat.position.set(c.x, c.y, c.z); cat.rotation.y = c.yaw;
+    scene.add(cat);
+  }
   // -- SHOP LIGHT ON THE PAVEMENT (owner: the street level lit like a city at night): every
   // shopfront lays a wash of its light on the ground before it, on all four sides ---------------
   {
@@ -1915,7 +1957,12 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   const matchArr = new Float32Array(23 * 3);
   const matchGeo = new BufferGeometry();
   const match = { ball: new Vector2(0, 0), vel: new Vector2(0.06, 0.02), home: [] as Vector2[] };
-  const fw = { pos: new Float32Array(60 * 3), vel: new Float32Array(60 * 3), col: new Float32Array(60 * 3), life: 0, next: 600, launched: 0 };
+  // FIREWORKS over the whole city (owner): a pool of bursts — each a rocket that climbs from a roof site for a second with
+  // a short trail, then a hundred sparks flung out, falling, fading in the burst's colour (a few crackle white); a new
+  // rocket every couple of seconds from one of the sites; none by day, none in calm
+  const FW_BURSTS = 5, FW_SPARKS = 110, FW_N = FW_BURSTS * FW_SPARKS;
+  const fw = { pos: new Float32Array(FW_N * 3), vel: new Float32Array(FW_N * 3), col: new Float32Array(FW_N * 3), next: 120, launched: 0,
+    bursts: Array.from({ length: FW_BURSTS }, () => ({ stage: 0 as 0 | 1 | 2, t: 0, x: 0, y: 0, z: 0, vy: 0, top: 0, col: new Color(), crackle: false })) };
   const fwGeo = new BufferGeometry();
   {
     const st = stadium;
@@ -2023,31 +2070,58 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
       }
       (crowdGeo.getAttribute('color') as BufferAttribute).needsUpdate = true;
     }
-    // fireworks over the bowl, now and then
-    if (fw.life > 0) {
-      fw.life -= 1;
-      const fade = fw.life / 70;
-      for (let i = 0; i < 60; i++) {
-        fw.vel[i * 3 + 1] -= 0.012;
-        fw.pos[i * 3] += fw.vel[i * 3]; fw.pos[i * 3 + 1] += fw.vel[i * 3 + 1]; fw.pos[i * 3 + 2] += fw.vel[i * 3 + 2];
-        fw.col[i * 3] *= 0.97; fw.col[i * 3 + 1] *= 0.97; fw.col[i * 3 + 2] *= 0.97;
+    // FIREWORKS: the bursts in flight
+    let touched = false;
+    fw.bursts.forEach((b, bi) => {
+      const base = bi * FW_SPARKS;
+      if (b.stage === 1) { // the rocket climbing: the head and a trail of the last frames' positions
+        b.t += 1; b.y += b.vy; b.vy -= 0.004;
+        for (let i = FW_SPARKS - 1; i > 0; i--) { fw.pos[(base + i) * 3] = fw.pos[(base + i - 1) * 3]; fw.pos[(base + i) * 3 + 1] = fw.pos[(base + i - 1) * 3 + 1]; fw.pos[(base + i) * 3 + 2] = fw.pos[(base + i - 1) * 3 + 2]; }
+        fw.pos[base * 3] = b.x + Math.sin(b.t * 0.3) * 0.2; fw.pos[base * 3 + 1] = b.y; fw.pos[base * 3 + 2] = b.z;
+        for (let i = 0; i < FW_SPARKS; i++) { const k = i < 12 ? 1 - i / 12 : 0; fw.col[(base + i) * 3] = 0.9 * k; fw.col[(base + i) * 3 + 1] = 0.7 * k; fw.col[(base + i) * 3 + 2] = 0.4 * k; }
+        if (b.y >= b.top || b.vy <= 0.05) { // the burst
+          b.stage = 2; b.t = 0;
+          for (let i = 0; i < FW_SPARKS; i++) {
+            const a = rand() * Math.PI * 2, c = (rand() - 0.5) * Math.PI, sp = 0.35 + rand() * 0.55;
+            fw.pos[(base + i) * 3] = b.x; fw.pos[(base + i) * 3 + 1] = b.y; fw.pos[(base + i) * 3 + 2] = b.z;
+            fw.vel[(base + i) * 3] = Math.cos(a) * Math.cos(c) * sp; fw.vel[(base + i) * 3 + 1] = Math.sin(c) * sp + 0.1; fw.vel[(base + i) * 3 + 2] = Math.sin(a) * Math.cos(c) * sp;
+            b.col.toArray(fw.col, (base + i) * 3);
+          }
+        }
+        touched = true;
+      } else if (b.stage === 2) { // the sparks falling and fading
+        b.t += 1;
+        const fade = b.t < 70 ? 0.985 : 0.93;
+        for (let i = 0; i < FW_SPARKS; i++) {
+          const j = (base + i) * 3;
+          fw.vel[j] *= 0.985; fw.vel[j + 2] *= 0.985; fw.vel[j + 1] = fw.vel[j + 1] * 0.985 - 0.009;
+          fw.pos[j] += fw.vel[j]; fw.pos[j + 1] += fw.vel[j + 1]; fw.pos[j + 2] += fw.vel[j + 2];
+          const twinkle = b.crackle && ((tick + i) & 4) ? 1.6 : 1;
+          fw.col[j] *= fade * twinkle; fw.col[j + 1] *= fade * twinkle; fw.col[j + 2] *= fade * twinkle;
+          if (twinkle > 1) { fw.col[j] = Math.min(1, fw.col[j]); fw.col[j + 1] = Math.min(1, fw.col[j + 1]); fw.col[j + 2] = Math.min(1, fw.col[j + 2]); }
+        }
+        if (b.t > 140) { b.stage = 0; for (let i = 0; i < FW_SPARKS * 3; i++) fw.col[base * 3 + i] = 0; }
+        touched = true;
       }
-      if (fw.life === 0) fw.col.fill(0);
+    });
+    if (--fw.next <= 0 && lampLevel > 0.5 && !calm) { // a new rocket from one of the sites (none by day, none in calm)
+      fw.next = 90 + Math.floor(rand() * 150);
+      const b = fw.bursts.find((q) => q.stage === 0);
+      if (b) {
+        const site = pick(rand, plan.fireworks);
+        b.stage = 1; b.t = 0; b.x = site.x + (rand() - 0.5) * 4; b.y = site.y; b.z = site.z + (rand() - 0.5) * 4;
+        b.vy = 0.75 + rand() * 0.25; b.top = site.y + 34 + rand() * 30;
+        b.col.set(pick(rand, ['#ff4a3c', '#ffd23f', '#5df2ff', '#ff4fd8', '#C8FF00', '#ffffff', '#ff8c42']));
+        b.crackle = rand() < 0.3;
+        fw.launched += 1;
+        const base = fw.bursts.indexOf(b) * FW_SPARKS;
+        for (let i = 0; i < FW_SPARKS; i++) { fw.pos[(base + i) * 3] = b.x; fw.pos[(base + i) * 3 + 1] = b.y; fw.pos[(base + i) * 3 + 2] = b.z; }
+        touched = true;
+      }
+    }
+    if (touched) {
       (fwGeo.getAttribute('position') as BufferAttribute).needsUpdate = true;
       (fwGeo.getAttribute('color') as BufferAttribute).needsUpdate = true;
-      void fade;
-    } else if (--fw.next <= 0 && lampLevel > 0.5) { // (no fireworks by day)
-      fw.next = 700 + Math.floor(rand() * 900);
-      fw.life = 70;
-      fw.launched += 1;
-      const cx = st.x + (rand() - 0.5) * 30, cy = st.h + 30 + rand() * 20, cz = st.z + (rand() - 0.5) * 20;
-      const col = new Color(pick(rand, ['#ff4a3c', '#ffd23f', '#5df2ff', '#ff4fd8', '#C8FF00']));
-      for (let i = 0; i < 60; i++) {
-        const a = rand() * Math.PI * 2, b = (rand() - 0.5) * Math.PI, sp = 0.45 + rand() * 0.5;
-        fw.pos[i * 3] = cx; fw.pos[i * 3 + 1] = cy; fw.pos[i * 3 + 2] = cz;
-        fw.vel[i * 3] = Math.cos(a) * Math.cos(b) * sp; fw.vel[i * 3 + 1] = Math.sin(b) * sp; fw.vel[i * 3 + 2] = Math.sin(a) * Math.cos(b) * sp;
-        col.toArray(fw.col, i * 3);
-      }
     }
   };
   const wheel = new Group();
@@ -2933,6 +3007,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   zones.push({ x: 0, z: 0, w: 22, d: 22, stalls: [{ x: 0, z: 0, color: '#ffffff' }] });
   for (const st of plan.stages) zones.push({ x: st.x + Math.sign(st.x) * (st.w / 2 + 6.5), z: st.z, w: 9, d: 16, stalls: [] });
   for (const pt of plan.parties) zones.push({ x: pt.x, y: pt.y, z: pt.z, w: pt.w, d: pt.d, stalls: [] });
+  for (const pz of plan.plazas) zones.push({ x: pz.x, z: pz.z, w: pz.w, d: pz.d, stalls: [] }); // the stadium's forecourt, the wheel's queue
   const walkOK = (x: number, z: number, axis: 'x' | 'z' | 'd', frames: number) => { // the pedestrian signal for crossing the street along axis at the node
     const n = nodeAt.get(`${Math.round(x)}:${Math.round(z)}`);
     if (!n || !n.signal) return 'unlit';
@@ -3107,9 +3182,10 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   // the streets with searchlights — banking through the turns, bobbing on
   // their fans; and six that set down on the tallest roofs' pads, wait, and
   // take off again --------------------------------------------------------------
+  type AirKind = 'car' | 'taxi' | 'bus' | 'cargo' | 'drone' | 'police';
   interface Flyer {
     lane: AirLane | null; s: number; v: number; lat: number; phase: number; yaw: number; roll: number;
-    x: number; y: number; z: number; police: boolean;
+    x: number; y: number; z: number; police: boolean; kind: AirKind;
     pad: { x: number; y: number; z: number } | null; stage: 'in' | 'sit' | 'out'; timer: number; from: Vector3; to: Vector3;
   }
   const laneLen = plan.air.map((l) => {
@@ -3122,16 +3198,34 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     return cum;
   });
   const flyers: Flyer[] = [];
-  const flyer = (lane: AirLane | null, police = false): Flyer => ({
-    lane, s: 0, v: 0, lat: (rand() - 0.5) * 5, phase: rand() * 7, yaw: 0, roll: 0, x: 0, y: 0, z: 0, police,
+  // SIX KINDS (owner: more flying vehicles, more variants): the car, the taxi, the shuttle bus, the cargo lifter with a
+  // container slung under it, the courier drone, the police — each its build, colour, pace and lights
+  const AIR: Record<AirKind, { body: [number, number, number]; cabin: [number, number, number]; color: string; pace: number }> = {
+    car: { body: [2.2, 0.8, 4.2], cabin: [1.5, 0.6, 1.8], color: '#2a3252', pace: 1 },
+    taxi: { body: [2.2, 0.8, 4.2], cabin: [1.5, 0.6, 1.8], color: '#ffd23f', pace: 1.05 },
+    bus: { body: [2.6, 1.3, 8.2], cabin: [2.2, 0.9, 6.4], color: '#d9d2c4', pace: 0.8 },
+    cargo: { body: [3.0, 1.0, 5.6], cabin: [2.4, 1.9, 4.0], color: '#b8541f', pace: 0.7 },
+    drone: { body: [0.9, 0.28, 0.9], cabin: [0.5, 0.35, 0.5], color: '#3dff8f', pace: 1.7 },
+    police: { body: [2.2, 0.8, 4.2], cabin: [1.5, 0.6, 1.8], color: '#1a2a55', pace: 1 },
+  };
+  const kindFor = (lane: AirLane): AirKind => {
+    const a = rand();
+    if (lane.kind === 'patrol') return 'police';
+    if (lane.kind === 'canyon') return a < 0.4 ? 'car' : a < 0.6 ? 'taxi' : a < 0.85 ? 'drone' : 'cargo';
+    if (lane.kind === 'arc') return a < 0.35 ? 'car' : a < 0.5 ? 'taxi' : a < 0.75 ? 'bus' : 'cargo';
+    return a < 0.45 ? 'car' : a < 0.65 ? 'taxi' : a < 0.8 ? 'bus' : a < 0.92 ? 'cargo' : 'drone';
+  };
+  const flyer = (lane: AirLane | null, kind: AirKind): Flyer => ({
+    lane, s: 0, v: 0, lat: (rand() - 0.5) * (lane && lane.kind === 'canyon' ? 2.4 : 5), phase: rand() * 7, yaw: 0, roll: 0, x: 0, y: 0, z: 0, police: kind === 'police', kind,
     pad: null, stage: 'in', timer: 0, from: new Vector3(), to: new Vector3(),
   });
+  const mobileAir = isMobile() ? 0.5 : 1;
   plan.air.forEach((lane, li) => {
-    const n = lane.kind === 'patrol' ? 1 : lane.kind === 'ring' ? 10 : 8;
+    const n = Math.max(1, Math.round((lane.kind === 'patrol' ? 1 : lane.kind === 'ring' ? 14 : lane.kind === 'canyon' ? 7 : lane.kind === 'arc' ? 9 : 10) * mobileAir));
     for (let i = 0; i < n; i++) {
-      const fl = flyer(lane, lane.kind === 'patrol');
+      const fl = flyer(lane, kindFor(lane));
       fl.s = (i / n) * laneLen[li][laneLen[li].length - 1];
-      fl.v = lane.speed * (0.85 + rand() * 0.3);
+      fl.v = lane.speed * (0.85 + rand() * 0.3) * AIR[fl.kind].pace;
       flyers.push(fl);
     }
   });
@@ -3146,15 +3240,18 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     fl.phase = fl.timer;
   };
   for (const pad of plan.pads) {
-    const fl = flyer(null);
+    const fl = flyer(null, rand() < 0.5 ? 'car' : 'taxi');
     fl.pad = pad;
     padCycle(fl, rand() < 0.5 ? 'in' : 'out');
     fl.timer *= rand();
     flyers.push(fl);
   }
   const FLYERS = flyers.length;
-  const airBody = new InstancedMesh(geo.box, new MeshLambertMaterial({ color: '#2a3252', emissive: '#1a2a55', emissiveIntensity: 0.6 }), FLYERS);
+  const airBody = new InstancedMesh(geo.box, new MeshLambertMaterial({ color: '#ffffff', emissive: '#101a33', emissiveIntensity: 0.6 }), FLYERS);
   const airCabin = new InstancedMesh(geo.box, new MeshLambertMaterial({ color: '#0d1626', emissive: '#7de8ff', emissiveIntensity: 0.7 }), FLYERS);
+  flyers.forEach((fl, i) => { airBody.setColorAt(i, new Color(AIR[fl.kind].color)); airCabin.setColorAt(i, new Color(fl.kind === 'cargo' ? '#2a2420' : fl.kind === 'drone' ? '#062a12' : '#0d1626')); });
+  if (airBody.instanceColor) airBody.instanceColor.needsUpdate = true;
+  if (airCabin.instanceColor) airCabin.instanceColor.needsUpdate = true;
   scene.add(airBody, airCabin);
   const airLights = (() => {
     const arr = new Float32Array(FLYERS * 4 * 3), col = new Float32Array(FLYERS * 4 * 3);
@@ -3223,21 +3320,23 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
       dummy.rotation.order = 'YXZ';
       dummy.position.set(fl.x, fl.y + bob, fl.z);
       dummy.rotation.set(0, fl.yaw, fl.roll);
-      dummy.scale.set(2.2, 0.8, 4.2);
+      const K = AIR[fl.kind];
+      dummy.scale.set(K.body[0], K.body[1], K.body[2]);
       dummy.updateMatrix();
       airBody.setMatrixAt(i, dummy.matrix);
-      dummy.scale.set(1.5, 0.6, 1.8);
-      dummy.position.y += 0.6;
+      dummy.scale.set(K.cabin[0], K.cabin[1], K.cabin[2]);
+      dummy.position.y += fl.kind === 'cargo' ? -1.4 : fl.kind === 'drone' ? 0.3 : 0.6; // (the lifter's container hangs beneath it)
       dummy.updateMatrix();
       airCabin.setMatrixAt(i, dummy.matrix);
       const sx = Math.sin(fl.yaw), cz = Math.cos(fl.yaw);
       const lx = cz, lz = -sx; // the lateral
       const strobe = ((tick + Math.floor(fl.phase * 10)) % 60) < 4;
+      const span = fl.kind === 'bus' ? 1.4 : fl.kind === 'drone' ? 0.5 : fl.kind === 'cargo' ? 1.6 : 1.2, tail = fl.kind === 'bus' ? 4.2 : fl.kind === 'drone' ? 0.5 : 2.2;
       const lights: [number, number, number, Color][] = [
-        [fl.x + lx * 1.2, fl.y + bob + 0.2, fl.z + lz * 1.2, NAV[0]],
-        [fl.x - lx * 1.2, fl.y + bob + 0.2, fl.z - lz * 1.2, NAV[1]],
-        [fl.x, fl.y + bob + 1.1, fl.z, strobe ? NAV[2] : (fl.police && (tick >> 3) % 2 ? NAV[0] : NAV[3].clone().multiplyScalar(0.1))],
-        [fl.x - sx * 2.2, fl.y + bob, fl.z - cz * 2.2, NAV[3]],
+        [fl.x + lx * span, fl.y + bob + 0.2, fl.z + lz * span, NAV[0]],
+        [fl.x - lx * span, fl.y + bob + 0.2, fl.z - lz * span, NAV[1]],
+        [fl.x, fl.y + bob + 1.1, fl.z, strobe ? NAV[2] : (fl.police && (tick >> 3) % 2 ? NAV[0] : fl.kind === 'drone' ? NAV[1] : NAV[3].clone().multiplyScalar(0.1))],
+        [fl.x - sx * tail, fl.y + bob, fl.z - cz * tail, fl.kind === 'taxi' ? NAV[2] : NAV[3]],
       ];
       lights.forEach(([x, y, z, c], k) => { const j = (i * 4 + k) * 3; airLights.arr[j] = x; airLights.arr[j + 1] = y; airLights.arr[j + 2] = z; c.toArray(airLights.col, j); });
       if (fl.police) {
@@ -3488,6 +3587,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     const LAMP = new Color('#ffe2b8');
     // (32 cd: at 55 the eighteen nearest lamps, a few units from a low eye, whited the road out — measured 230,220,246 mean)
     for (const p of plan.posts) practicals.push({ x: p.x, y: (p.y ?? 0) + p.h + 0.2, z: p.z, color: LAMP, power: 32, reach: 30 });
+    if (plan.cat) for (const sx of [-1, 1]) practicals.push({ x: plan.cat.x + Math.cos(plan.cat.yaw) * sx * plan.cat.w * 0.4, y: plan.cat.y + 1.2, z: plan.cat.z - Math.sin(plan.cat.yaw) * sx * plan.cat.w * 0.4, color: new Color('#ffb36b'), power: 60, reach: 40 }); // the cat's spots
     for (let i = 0; i < plan.sprawlLamps.length; i += 3) practicals.push({ x: plan.sprawlLamps[i], y: plan.sprawlLamps[i + 1], z: plan.sprawlLamps[i + 2], color: new Color('#ffd9a0'), power: 24, reach: 24 });
     for (let i = 0; i < plan.lanterns.length; i += 3) practicals.push({ x: plan.lanterns[i], y: plan.lanterns[i + 1], z: plan.lanterns[i + 2], color: new Color('#ffb36b'), power: 9, reach: 14 });
     for (const sg of plan.signs) {
@@ -3693,6 +3793,12 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     }
     tendHolos();
     wheel.rotation.x += 0.004;
+    if (catRig.head) { // the cat: a slow turn of the head, a blink every few seconds, the tail swishing
+      catRig.head.rotation.y = Math.sin(tick * 0.0045) * 0.28 + Math.sin(tick * 0.011) * 0.06;
+      const blink = (tick % 290) < 7 ? 0.12 : 1;
+      for (const e of catRig.eyes) e.scale.y = blink;
+      if (catRig.tail) { catRig.tail.rotation.y = Math.sin(tick * 0.017) * 0.35; catRig.tail.rotation.x = Math.sin(tick * 0.009) * 0.08; }
+    }
     waterTex.offset.y = (waterTex.offset.y + 0.0015) % 1;
     (mirror.material as MeshBasicMaterial).opacity = 0.3 + Math.sin(tick * 0.03) * 0.06;
     craftMat.opacity = tick % 40 < 20 ? 1 : 0.15;
@@ -3839,7 +3945,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     setTime: (t, instant = false) => { setTime(t, instant); render(); },
     time: () => timeNow,
     probe: () => ({
-      people: PEOPLE, cars: cars.length, flyers: FLYERS, look: lookNow.label, blend: lookT, bleach: wallBleach.value,
+      people: PEOPLE, cars: cars.length, flyers: FLYERS, fireworks: fw.launched, cat: plan.cat ? [plan.cat.x, plan.cat.y, plan.cat.z, plan.cat.w] : null, airKinds: flyers.reduce((m, fl) => ({ ...m, [fl.kind]: (m[fl.kind] ?? 0) + 1 }), {} as Record<string, number>), look: lookNow.label, blend: lookT, bleach: wallBleach.value,
       knots: people.knots.filter((k) => k.members.length > 1).slice(0, 6).map((k) => [k.x, k.st.y, k.z, k.members.length]),
       air: flyers.slice(0, 6).map((fl) => [fl.x, fl.y, fl.z]),
       pads: flyers.filter((fl) => fl.pad).map((fl) => [fl.x, fl.y, fl.z, fl.stage === 'sit' ? 1 : 0]),

@@ -187,7 +187,7 @@ export function blockJitter(bx: number, bz: number): number {
 }
 /** A corridor for the flying traffic: a polyline (closed when `loop`),
  *  every point lifted clear of the skyline under the legs it joins. */
-export interface AirLane { pts: [number, number, number][]; loop: boolean; speed: number; kind: 'avenue' | 'ring' | 'patrol' }
+export interface AirLane { pts: [number, number, number][]; loop: boolean; speed: number; kind: 'avenue' | 'ring' | 'patrol' | 'canyon' | 'arc' }
 export type WinStyle = 'grid' | 'ribbon' | 'strip' | 'tiny' | 'wide' | 'curtain';
 export interface FacadeStyle {
   tint: string; win: WinStyle; crown: boolean; density: number; warm: number; dim: number; core: boolean;
@@ -222,6 +222,13 @@ export interface Plan {
   /** The gate complexes straddling the tree-lined avenue: their centre on the avenue's axis, the bridge building's
    *  underside and top, the towers' top. */
   gates: { x: number; under: number; deck: number; top: number }[];
+  /** Fireworks launch sites: flat roofs spread over the quarters, and the stadium (the renderer fires them). */
+  fireworks: { x: number; y: number; z: number }[];
+  /** The cat's roof (owner: a giant orange cat on a central skyscraper): the roof's top, the cat's yaw (it faces the
+   *  plaza) and the roof's narrow side, which sizes it. Null on a plan with no roof for it. */
+  cat: { x: number; y: number; z: number; yaw: number; w: number } | null;
+  /** Plazas where a crowd mills at ground level: the stadium's forecourt, the wheel's boarding station. */
+  plazas: { x: number; z: number; w: number; d: number }[];
   leds: Strip[];
   awnings: Strip[];
   /** Tarpaulins over the shacks and the stalls, the washing on the balconies — lit dim, in their own colours. */
@@ -472,6 +479,7 @@ export function planCity(seed: number): Plan {
   const superblocks: Plan['superblocks'] = [];
   const stages: Plan['stages'] = [];
   const gates: Plan['gates'] = [];
+  const plazas: Plan['plazas'] = [];
   const extraBeacons: { x: number; y: number; z: number }[] = []; // (the gates', the canal's: joined to the beacons below)
   const subways: { x: number; z: number; rotY: number }[] = [];
   const piers: { x: number; z: number }[] = [];
@@ -1671,7 +1679,7 @@ export function planCity(seed: number): Plan {
   // -- the stadium, the wheel, the megastructure, the temples, the industry ----
   const sx0 = streetAt(-5), sz0 = streetAt(3);
   const stadium = {
-    x: sx0, z: sz0, w: 58, d: 44, h: 13,
+    x: sx0, z: sz0, w: 58, d: 40, h: 13, // (owner: the base's north edge sat on the arterial's pavement — pulled back)
     masts: [[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([a, b]) => ({ x: sx0 + a * 27, z: sz0 + b * 20, h: 24 })),
     gates: [[0, -1, Math.PI], [1, 0, Math.PI / 2], [0, 1, 0], [-1, 0, -Math.PI / 2]].map(([a, b, rotY]) => ({ x: sx0 + a * 29.4, z: sz0 + b * 22.4, rotY })),
   };
@@ -1682,9 +1690,68 @@ export function planCity(seed: number): Plan {
   signs.push({ x: sx0, y: 15.5, z: sz0 + stadium.d / 2 + 0.4, rotY: 0, w: 22, h: 4, color: '#ff4fd8', kind: 'screen' });
   for (const g of stadium.gates) signs.push({ x: g.x, y: 6.4, z: g.z, rotY: g.rotY, w: 9, h: 1.6, color: signColor(rand), kind: 'board' });
   grid.add({ x: stadium.x, y: stadium.h + 2.4, z: stadium.z, w: stadium.w + 4, h: 1.2, d: stadium.d + 4 }); // the roof ring
+  // THE PRECINCT (owner: the area around the stadium and the wheel must be crowded, full of infrastructure, and have an
+  // entrance): the SOUTH FORECOURT before the south gate — a lit entrance arch, a row of turnstiles, two ticket booths,
+  // queue rails, food stalls either end, a crowd milling; on the NORTH face an entrance straight off the arterial's
+  // pavement (turnstiles in the wall, a lit lintel); flags on the four masts
+  {
+    const S = -1, edge = sz0 + S * stadium.d / 2; // the forecourt lies SOUTH of the base (the arterial runs along its north face)
+    const fz = edge + S * 4.5; // the forecourt's middle, 9 deep, up to the lot's edge
+    plazas.push({ x: sx0, z: fz, w: 52, d: 8 });
+    for (const sx of [-1, 1]) solid(core, 'dark', 'street', 0, sx0 + sx * 7, 4.2, edge + S * 1.2, 0.5, 8.4, 0.5); // the arch's posts
+    solid(core, 'dark', 'street', 0, sx0, 8.3, edge + S * 1.2, 14.6, 0.5, 0.6); // its lintel
+    leds.push({ x: sx0, y: 8.0, z: edge + S * 1.55, w: 14, h: 0.14, d: 0.14, color: '#C8FF00' });
+    signs.push({ x: sx0, y: 9.4, z: edge + S * 1.5, rotY: Math.PI, w: 10, h: 1.8, color: '#ff4fd8', kind: 'board' });
+    for (let k = -3; k <= 3; k++) { // the turnstiles, a gap in the middle for the wheelchairs
+      if (k === 0) continue;
+      const tx = sx0 + k * 1.6;
+      solid(core, 'dark', 'street', 0, tx, 0.55, edge + S * 2.6, 0.4, 1.1, 0.4);
+      solid(core, 'dark', 'street', 0, tx + 0.8, 0.9, edge + S * 2.6, 1.2, 0.08, 0.08); // the bar
+    }
+    for (const sx of [-1, 1]) { // the ticket booths, lit
+      const bx = sx0 + sx * 11, bz = edge + S * 2.8;
+      solid(core, 'dark', 'street', 0, bx, 1.3, bz, 2.6, 2.6, 2.0);
+      signs.push({ x: bx, y: 2.95, z: bz + S * 1.05, rotY: Math.PI, w: 2.2, h: 0.6, color: '#5df2ff', kind: 'board' });
+      lantern(bx, 2.9, bz + S * 1.2);
+      for (let k = 1; k <= 3; k++) solid(core, 'dark', 'street', 0, bx + sx * 2.4, 0.5, bz + S * k * 1.8, 0.1, 1.0, 0.1); // the queue rails' posts
+      for (let k = 1; k < 3; k++) wires.push(bx + sx * 2.4, 0.95, bz + S * k * 1.8, bx + sx * 2.4, 0.9, bz + S * (k * 1.8 + 0.9), bx + sx * 2.4, 0.9, bz + S * (k * 1.8 + 0.9), bx + sx * 2.4, 0.95, bz + S * (k + 1) * 1.8); // the rope
+      const stx = sx0 + sx * 22, stz = edge + S * 4.5; // a food stall each end
+      stalls.push({ x: stx, z: stz, color: signColor(rand) });
+      for (const [ox, oz] of [[-1.3, -1.1], [1.3, -1.1], [-1.3, 1.1], [1.3, 1.1]]) solid(core, 'dark', 'street', 0, stx + ox, 1.2, stz + oz, 0.14, 2.4, 0.14);
+      grid.add({ x: stx, y: 2.9, z: stz, w: 3.2, h: 1.2, d: 2.6 });
+      lantern(stx, 2.2, stz);
+    }
+    for (let u = -24; u <= 24; u += 6) lantern(sx0 + u, 4.2, edge + S * 7.5); // a string of lights along the forecourt's edge
+    const north = sz0 + stadium.d / 2; // the north entrance, off the arterial's pavement: turnstiles in the wall under a lit lintel
+    for (let k = -3; k <= 3; k++) {
+      if (k === 0) continue;
+      solid(core, 'dark', 'street', 0, sx0 + k * 1.6, 0.55, north + 0.6, 0.4, 1.1, 0.4);
+    }
+    leds.push({ x: sx0, y: 6.2, z: north + 0.5, w: 12, h: 0.14, d: 0.14, color: '#5df2ff' });
+    signs.push({ x: sx0, y: 7.2, z: north + 0.6, rotY: 0, w: 9, h: 1.6, color: '#C8FF00', kind: 'board' });
+    doors.push({ x: sx0, z: north + 0.4 }, { x: sx0, z: edge + S * 2.6 });
+    for (const m of stadium.masts) tarps.push({ x: m.x + 1.1, y: m.h - 1.2, z: m.z, w: 2.2, h: 1.4, d: 0.08, color: pick(rand, ['#ff4fd8', '#5df2ff', '#C8FF00', '#ffd23f']) }); // the flags
+  }
   const wheel = { x: -6 * G, y: 14.5, z: 4 * G, r: 11.5 }; // fits its lot: no overhang onto the streets
   grid.add({ x: wheel.x, y: wheel.y, z: wheel.z, w: 3, h: 25, d: 25 });
   for (const s of [-1, 1]) solid(core, 'dark', 'street', 0, wheel.x + s * 4, 7.25, wheel.z, 1.6, 14.5, 1.6);
+  { // THE BOARDING STATION under the wheel (owner: it must have an entrance): a platform at the rim's foot on the lot's
+    // east side, a queue snaking to it between rails, a ticket booth, a lit arch at the lot's edge, lamps, a crowd
+    const ex = wheel.x + 5.5, ez = wheel.z; // the platform, east of the rim's foot
+    solid(core, 'dark', 'street', 0, ex, 0.35, ez, 5, 0.7, 6); // the platform
+    plazas.push({ x: wheel.x + 9.5, z: wheel.z, w: 5, d: 12 }); // the queue's ground
+    for (const sz of [-1, 1]) for (let k = 0; k < 4; k++) solid(core, 'dark', 'street', 0, wheel.x + 7.5 + k * 1.6, 0.5, ez + sz * 3.2, 0.1, 1.0, 0.1); // the queue rails' posts
+    for (const sz of [-1, 1]) for (let k = 0; k < 3; k++) wires.push(wheel.x + 7.5 + k * 1.6, 0.95, ez + sz * 3.2, wheel.x + 8.3 + k * 1.6, 0.9, ez + sz * 3.2, wheel.x + 8.3 + k * 1.6, 0.9, ez + sz * 3.2, wheel.x + 9.1 + k * 1.6, 0.95, ez + sz * 3.2);
+    solid(core, 'dark', 'street', 0, wheel.x + 9.5, 1.3, ez + 6.4, 2.6, 2.6, 2.0); // the ticket booth
+    signs.push({ x: wheel.x + 9.5, y: 2.95, z: ez + 5.35, rotY: Math.PI, w: 2.2, h: 0.6, color: '#ffd23f', kind: 'board' });
+    lantern(wheel.x + 9.5, 2.9, ez + 5.2);
+    for (const sz of [-1, 1]) solid(core, 'dark', 'street', 0, wheel.x + 11.4, 3.6, ez + sz * 5, 0.5, 7.2, 0.5); // the arch at the lot's edge
+    solid(core, 'dark', 'street', 0, wheel.x + 11.4, 7.1, ez, 0.6, 0.5, 10.5);
+    leds.push({ x: wheel.x + 11.4, y: 6.8, z: ez, w: 0.14, h: 0.14, d: 10, color: '#ff4fd8' });
+    signs.push({ x: wheel.x + 11.7, y: 8.2, z: ez, rotY: Math.PI / 2, w: 7, h: 1.6, color: '#5df2ff', kind: 'board' });
+    for (const sz of [-1, 1]) posts.push({ x: wheel.x + 8, z: ez + sz * 7.5, h: 5 });
+    doors.push({ x: wheel.x + 11.4, z: ez });
+  }
   const mgx = streetAt(3), mgz = streetAt(-4);
   solid(core, 'facade', 'mega', MEGA_TEX, mgx, 22, mgz, 60, 44, 60);
   solid(core, 'facade', 'mega', MEGA_TEX, mgx + 4, 59, mgz - 3, 44, 30, 44);
@@ -1697,7 +1764,14 @@ export function planCity(seed: number): Plan {
   billboards.push({ x: mgx + 30.3, y: 26, z: mgz - 8, rotY: Math.PI / 2, w: 26, h: 14, art: 0, lit: 1 }); // giant, on the megastructure's east face
   billboards.push({ x: mgx + 10, y: 26, z: mgz - 30.3, rotY: Math.PI, w: 26, h: 14, art: 2, lit: 1 }); // and its south
   for (const [bx0, bz0] of [[mgx + 30.3, mgz - 8], [mgx + 10, mgz - 30.3]]) for (const u of [-8, 8]) spots.push(bx0 + (bz0 === mgz - 8 ? 0.9 : u), 33.6, bz0 + (bz0 === mgz - 8 ? u : 0.9));
-  holos.push({ x: mgx + 7, y: 140, z: mgz - 6, w: 34, h: 50, rotY: 0.6, kind: 'panel' });
+  holos.push({ x: mgx + 7, y: 168, z: mgz - 6, w: 34, h: 50, rotY: 0.6, kind: 'panel' }); // (lifted: the cat's head is at 122)
+  // THE CAT (owner: a giant orange cat sitting on one of the skyscrapers in the central part of the city): on the
+  // megastructure's summit tier between its spires, facing west toward the plaza, sitting back so its tail hangs down
+  // the east wall; solid to the flight, a point of interest for the auto camera. Twenty-eight units of tier carry a cat
+  // twenty wide and twenty tall.
+  const cat = { x: mgx + 7 + 6, y: 102, z: mgz - 6, yaw: -Math.PI / 2, w: 28 };
+  grid.add({ x: mgx + 7 + 5, y: 102 + 10, z: mgz - 6, w: 15, h: 21, d: 14 });
+  pois.push({ x: cat.x - 3, y: 118, z: cat.z, w: 3.4 });
   holos.push({ x: -60, y: 84, z: 64, w: 22, h: 36, rotY: -0.4, kind: 'panel' });
   holos.push({ x: sx0, y: 46, z: sz0, w: 26, h: 26, rotY: 1.1, kind: 'panel' });
   // (owner: the plates' holograms over the streets) a turning ring of glyphs over the plaza, panels looking
@@ -2510,10 +2584,62 @@ export function planCity(seed: number): Plan {
   const ring: [number, number, number][] = [];
   for (let i = 0; i < 12; i++) { const a = (i / 12) * Math.PI * 2; ring.push([Math.cos(a) * 212, 96, Math.sin(a) * 212]); }
   air.push({ kind: 'ring', loop: true, speed: 0.5, pts: lift(ring, true, 12) });
+  // CANYON LANES (owner: flying cars between the buildings): along eight streets, a loop out at 46 and back at 54, three
+  // off the axis either way. The height is a PROFILE along the street — every nineteen units the lowest band of twelve
+  // clear of solids at or above the lane's floor (an overbuild, the rail, a gate, a footbridge lifts it there and only
+  // there), smoothed so a flyer climbs no more than eight in nineteen. (lift() reads the skyline by grid cell, and a
+  // cell eight wide beside a street holds the towers along it: it would have carried every lane over the roofs.)
+  const canyonRun = (alongX: boolean, at: number, lat: number, y0: number, dir: 1 | -1): [number, number, number][] => {
+    const pts: [number, number, number][] = [];
+    for (let t = -REACH; t <= REACH + 0.5; t += 19) {
+      const x = alongX ? t : at + lat, z = alongX ? at + lat : t;
+      let y = y0;
+      for (let tries = 0; tries < 30; tries++) {
+        let clear = true;
+        for (let k = 0; k <= 12; k += 3) if (grid.hit(x, y + k, z, 2.0)) { clear = false; break; }
+        if (clear) break;
+        y += 4;
+      }
+      pts.push([x, y, z]);
+    }
+    for (let pass = 0; pass < 4; pass++) for (let i = 0; i < pts.length; i++) { const prev = i > 0 ? pts[i - 1][1] : pts[i][1], next = i < pts.length - 1 ? pts[i + 1][1] : pts[i][1]; pts[i][1] = Math.max(pts[i][1], prev - 8, next - 8); }
+    return dir > 0 ? pts : pts.reverse();
+  };
+  const canyonLoop = (alongX: boolean, at: number): [number, number, number][] => {
+    const out = canyonRun(alongX, at, alongX ? -1.5 : 1.5, 46, 1), back = canyonRun(alongX, at, alongX ? 1.5 : -1.5, 54, -1); // (a unit and a half off the axis: the heights' towers stand a unit past the building line, and the two directions pass eight apart in height)
+    const turnA: [number, number, number] = alongX ? [REACH + 16, 50, at] : [at, 50, REACH + 16], turnB: [number, number, number] = alongX ? [-REACH - 16, 50, at] : [at, 50, -REACH - 16];
+    return [...out, turnA, ...back, turnB];
+  };
+  // the lines that stay OPEN across the core carry the lanes (a closed segment — a merge, a superblock, a feature — is
+  // built over, and a tower on the line would send the lane over the roofs): the four least closed each way, spread out
+  const closedAlong = (i: number, ns: boolean) => { let n = 0; for (let j = -HALF; j <= HALF; j++) if (!(ns ? openZ(i, j) : openX(i, j))) n += 1; return n; };
+  const pickLines = (ns: boolean): number[] => {
+    const cands = [-7, -6, -5, -4, -3, -2, 2, 3, 4, 5, 6].map((i) => ({ i, closed: closedAlong(i, ns) })).sort((a, b) => a.closed - b.closed || Math.abs(Math.abs(a.i) - 4.5) - Math.abs(Math.abs(b.i) - 4.5));
+    const out: number[] = [];
+    for (const c of cands) { if (out.some((o) => Math.abs(o - c.i) < 2)) continue; out.push(c.i); if (out.length === 4) break; }
+    return out;
+  };
+  for (const i of pickLines(true)) air.push({ kind: 'canyon', loop: true, speed: 0.36, pts: canyonLoop(false, streetAt(i)) }); // north–south lines
+  for (const i of pickLines(false)) air.push({ kind: 'canyon', loop: true, speed: 0.36, pts: canyonLoop(true, streetAt(i)) }); // east–west lines
+  // a second ring, higher and wider, and two cross-city arcs high over everything
+  const ring2: [number, number, number][] = [];
+  for (let i = 0; i < 14; i++) { const a = (i / 14) * Math.PI * 2; ring2.push([Math.cos(a) * 300, 132, Math.sin(a) * 300]); }
+  air.push({ kind: 'ring', loop: true, speed: 0.55, pts: lift(ring2, true, 12) });
+  air.push({ kind: 'arc', loop: true, speed: 0.6, pts: lift([[-REACH, 112, -REACH + 40], [0, 138, 0], [REACH, 112, REACH - 40], [REACH + 30, 118, REACH + 10], [REACH - 40, 124, REACH], [0, 148, 12], [-REACH + 40, 124, -REACH], [-REACH - 30, 118, -REACH - 10]], true, 12) });
+  air.push({ kind: 'arc', loop: true, speed: 0.6, pts: lift([[REACH, 116, -REACH + 40], [0, 142, 0], [-REACH, 116, REACH - 40], [-REACH - 30, 122, REACH + 10], [-REACH + 40, 128, REACH], [0, 152, -12], [REACH - 40, 128, -REACH], [REACH + 30, 122, -REACH - 10]], true, 12) });
   // (the patrols fly above the auto-flight's canyon band, which tops at 32 with a 2.6 pad)
   air.push({ kind: 'patrol', loop: true, speed: 0.16, pts: lift([[streetAt(-2), 36, streetAt(-2)], [streetAt(2), 36, streetAt(-2)], [streetAt(2), 36, streetAt(2)], [streetAt(-2), 36, streetAt(2)]], true, 8) });
   air.push({ kind: 'patrol', loop: true, speed: 0.15, pts: lift([[streetAt(-5), 36, streetAt(-1)], [streetAt(-1), 36, streetAt(-1)], [streetAt(-1), 36, streetAt(-5)], [streetAt(-5), 36, streetAt(-5)]], true, 8) });
   const pads = tall.slice(0, 6).map((t) => ({ x: t.x, y: t.top + 0.2, z: t.z }));
+  // FIREWORKS SITES (owner: fireworks periodically flying around the whole city): a flat roof in each of eight sectors
+  // (top 20–70, off the pads), and the stadium
+  const fireworks: Plan['fireworks'] = [{ x: stadium.x, y: stadium.h + 4, z: stadium.z }];
+  const clearAbove = (x: number, y: number, z: number) => [3, 8, 14, 22].every((k) => grid.hit(x, y + k, z, 2) === null); // (an annex or a tank may stand on a roof: the rocket needs the column clear)
+  for (let k = 0; k < 8; k++) {
+    const a0 = (k / 8) * Math.PI * 2, a1 = ((k + 1) / 8) * Math.PI * 2;
+    const t = tall.find((q) => q.flat && q.top >= 20 && q.top <= 70 && !pads.some((p) => p.x === q.x && p.z === q.z) && clearAbove(q.x, q.top, q.z) && (() => { const a = Math.atan2(q.z, q.x); const aa = a < 0 ? a + Math.PI * 2 : a; return aa >= a0 && aa < a1 && Math.hypot(q.x, q.z) > 60; })());
+    if (t) fireworks.push({ x: t.x, y: t.top + 0.5, z: t.z });
+  }
   for (const p of pads) grid.add({ x: p.x, y: p.y, z: p.z, w: 6, h: 0.4, d: 6 });
 
   // -- the giant screens, beacons, points of interest ------------------------
@@ -2641,7 +2767,7 @@ export function planCity(seed: number): Plan {
   return {
     core, outer, sprawl, strips, leds, awnings, tarps, clutter, billboards, spots, signs, posts, lanterns, wires, vents, holos, stalls, sprawlLamps, neon,
     beacons, pois, streets, stadium, wheel, mega, stacks, bridges, styles, sprawlTex, grid, landmark, roomAhead, air, pads, rail, piers, patches, parked, poles, superblocks, doors, lifts, subways,
-    parties, perches, stages, gates,
+    parties, perches, stages, gates, fireworks, cat, plazas,
   };
 }
 

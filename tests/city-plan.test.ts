@@ -83,6 +83,12 @@ describe('planCity', () => {
   });
 
   it('lays the air corridors clear of the skyline, and pads on the tallest roofs', () => {
+    expect(plan.air.length).toBeGreaterThanOrEqual(16); // the avenues, two rings, two arcs, eight canyon lanes, the patrols
+    expect(plan.air.filter((l) => l.kind === 'canyon').length).toBe(8);
+    for (const l of plan.air.filter((q) => q.kind === 'canyon')) { // between the buildings, over whatever spans the street: mostly low
+      for (const [, y] of l.pts) { expect(y).toBeGreaterThanOrEqual(46); expect(y).toBeLessThan(130); }
+      expect(l.pts.filter((p) => p[1] <= 62).length / l.pts.length).toBeGreaterThan(0.6);
+    }
     expect(plan.air.length).toBe(5);
     expect(plan.pads.length).toBe(6);
     for (const lane of plan.air) {
@@ -449,6 +455,29 @@ describe('The viaduct over its arterial (owner: roads that exist in real life)',
       expect(lat).toBeGreaterThan(ARTERIAL.w / 2 + 2.2);
       expect(lat).toBeLessThan(ARTERIAL_ROW - ARTERIAL.walk);
     }
+  });
+
+  it('gives the stadium a forecourt and two entrances and the wheel a boarding station, crowds in both, the arterial\'s pavement clear of the base', () => {
+    expect(plan.plazas.length).toBe(2);
+    const st = plan.stadium;
+    expect(st.d).toBe(40);
+    for (let x = st.x - 20; x <= st.x + 20; x += 5) expect(plan.grid.hit(x, 0.9, arterialZ(x) - ARTERIAL_ROW + 1.3, 0.3), 'the arterial pavement by the stadium').toBeNull();
+    expect(plan.doors.some((d) => Math.abs(d.x - st.x) < 1 && Math.abs(d.z - (st.z - st.d / 2 - 2.6)) < 1)).toBe(true); // the south forecourt's turnstiles
+    expect(plan.doors.some((d) => Math.abs(d.x - st.x) < 1 && Math.abs(d.z - (st.z + st.d / 2 + 0.4)) < 1)).toBe(true); // the north entrance off the arterial
+    expect(plan.stalls.filter((q) => Math.abs(q.z - (st.z - st.d / 2 - 4.5)) < 1).length).toBe(2);
+    expect(plan.doors.some((d) => Math.abs(d.x - (plan.wheel.x + 11.4)) < 1 && Math.abs(d.z - plan.wheel.z) < 1)).toBe(true);
+  });
+
+  it('sits the cat on the megastructure summit, solid to the flight, no party on it, and fires fireworks from nine sites', () => {
+    const cat = plan.cat!;
+    expect(cat).not.toBeNull();
+    expect(cat.y).toBeGreaterThanOrEqual(84); // the megastructure's summit tier
+    expect(cat.w).toBeGreaterThanOrEqual(14);
+    expect(Math.abs(cat.x)).toBeLessThan(190); expect(Math.abs(cat.z)).toBeLessThan(190);
+    expect(plan.grid.hit(cat.x, cat.y + cat.w * 0.6, cat.z, 0.5), 'the cat is solid').not.toBeNull();
+    expect(plan.parties.some((p) => Math.abs(p.x - cat.x) < 1 && Math.abs(p.z - cat.z) < 1)).toBe(false);
+    expect(plan.fireworks.length).toBeGreaterThanOrEqual(8); // the stadium and a roof in most of eight sectors
+    for (const f of plan.fireworks) expect(plan.grid.hit(f.x, f.y + 6, f.z, 1), 'clear sky over a launch site').toBeNull();
   });
 
   it('straddles the avenue with two gates: towers either side, a bridge building over the roads and the median, the avenue open beneath and above', () => {
