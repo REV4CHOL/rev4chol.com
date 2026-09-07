@@ -145,7 +145,7 @@ export class People {
         }
       }
     } else this.doors = null;
-    this.weights = this.walkable.map((s) => (s.kind === 'alley' ? s.len * 3 : s.kind === 'catwalk' ? s.len * 2 : s.kind === 'arterial' ? s.len * 1.5 : s.kind === 'lane' ? s.len * 1.2 : s.len));
+    this.weights = this.walkable.map((s) => (s.kind === 'alley' ? s.len * 4 : s.kind === 'catwalk' ? s.len * 2 : s.kind === 'arterial' ? s.len * 1.5 : s.kind === 'lane' ? s.len * 2 : s.len)); // (owner: the alleyways filled up)
     this.total = this.weights.reduce((a, b) => a + b, 0);
     const r = rand;
     for (const st of stalls) { // a vendor in every stall
@@ -153,7 +153,7 @@ export class People {
       p.kind = KIND.vendor; p.pace = 0.9;
       p.act = 'vend'; p.stall = st; p.x = st.x; p.z = st.z + 0.3; p.yaw = r() < 0.5 ? 0 : Math.PI; p.frame = FRAME.vend;
     }
-    for (let i = 0, knots = Math.max(8, Math.floor(n / 45)); i < knots; i++) { // knots of talk on the pavements (never on the water)
+    for (let i = 0, knots = Math.max(8, Math.floor(n / 32)); i < knots; i++) { // knots of talk on the pavements (never on the water)
       let st = this.pickStreet();
       const spot = (s: Street) => { const a = this.endOf(s, 'a'), b = this.endOf(s, 'b'); return a + r() * Math.max(0.5, s.len - a - b); }; // within the pavement's run (owner: a knot stood past a short catwalk's end)
       let t = spot(st);

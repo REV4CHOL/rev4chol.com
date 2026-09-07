@@ -227,7 +227,7 @@ describe('Traffic', () => {
     // owner: the traffic ground to a halt in jams until nothing moved — vehicles entered the boxes without
     // room to clear them, stalled mid-crossing, and every stalled box held the cross street too
     const t = new Traffic(plan.streets, mulberry32(SEED ^ 0x51f15e));
-    t.populate(1500, weight);
+    t.populate(2000, weight); // (the live count on a desktop)
     const cars = t.cars;
     let worstStopped = 0, worstInBox = 0, meetings = 0;
     for (let f = 1; f <= 40000; f++) {

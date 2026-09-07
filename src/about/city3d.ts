@@ -2577,7 +2577,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   // canal; pedestrians on the pavements and in the alleys; birds; aircraft ----
   const traffic = new Traffic(plan.streets, mulberry32(seed ^ 0x51f15e));
   const inCore = (x: number, z: number) => Math.abs(x) < EXT + G && Math.abs(z) < EXT + G;
-  traffic.populate(calm ? 800 : isMobile() ? 700 : 1500, (lane) => {
+  traffic.populate(calm ? 900 : isMobile() ? 800 : 2000, (lane) => { // (owner: more ground vehicles — the flow test holds at two thousand)
     const st = lane.link.street;
     const t = (lane.link.t0 + lane.link.t1) / 2;
     return lane.len * (inCore(st.x0 + st.dx * t, st.z0 + st.dz * t) ? 3 : 0.9) * (st.kind === 'highway' ? 2.2 : st.kind === 'arterial' ? 2.5 : 1);
@@ -2939,7 +2939,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     const st = axis === 'd' ? n.streets.find((q) => q.kind === 'diagonal') : n.streets.find((q) => q.kind !== 'diagonal' && (axis === 'x') === (q.dx !== 0));
     return st ? traffic.walk(n, Math.max(0, n.streets.indexOf(st)), frames) : 'unlit';
   };
-  const people = new People(plan.streets, zones, plan.stalls, mulberry32(seed ^ 0x7e0b1e), calm ? 1100 : isMobile() ? 1200 : 2200, crossOK, crossNodes, {
+  const people = new People(plan.streets, zones, plan.stalls, mulberry32(seed ^ 0x7e0b1e), calm ? 1400 : isMobile() ? 1500 : 3800, crossOK, crossNodes, { // (owner: a city crowded with pedestrians)
     solid: (x, y, z) => plan.grid.hit(x, y, z, 0.3) !== null,
     roadClear: (x, z) => traffic.clearAt(x, z),
     walkOK,
