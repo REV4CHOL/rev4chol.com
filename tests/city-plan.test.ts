@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Vector3 } from 'three';
-import { ARTERIAL, ARTERIAL_ROW, arterialLat, arterialZ, AutoFlight, BOUND, CAM_R, CANAL, carriagewayAt, CAT_TAIL, catTailCorners, CITADEL, cityTiles, CollisionGrid, districtOf, EXT, G, HALF, HIGHWAY, LANE_CAR, LANE_W, MEDIAN, OUTER, planCity, RAIL, RAMP, RAMP_W, rampY, ROAD, starPositions, STREET, streetAt, TILE_P, tourRoute } from '../src/about/city-plan';
+import { ARTERIAL, ARTERIAL_ROW, arterialLat, arterialZ, AutoFlight, BOUND, CAM_R, CANAL, CANAL_END, carriagewayAt, CAT_TAIL, catTailCorners, CITADEL, cityTiles, CollisionGrid, districtOf, EXT, G, HALF, HIGHWAY, LANE_CAR, LANE_W, HW_FAR, isMass, LANDMARK_ARCH, MEDIAN, OUTER, planCity, RAIL, RAMP, RAMP_W, rampY, ROAD, starPositions, STREET, streetAt, TILE_P, tourRoute } from '../src/about/city-plan';
 import { mulberry32 } from '../src/lib/rng';
 import { streetPoint } from '../src/about/city-traffic';
 import { FAMILIES, FLOOR as SKIN_FLOOR, PX as SKIN_PX, SHOP as SKIN_SHOP } from '../src/about/city-skins';
@@ -76,7 +76,7 @@ describe('planCity', () => {
     expect(plan.holos.length).toBe(15); // (twelve, a ring of glyphs over each of the avenue's gates, the citadel's ring)
     expect(plan.stalls.length).toBeGreaterThan(80); // the night market and three flea markets
     expect(plan.stacks.length).toBeGreaterThanOrEqual(2);
-    expect(plan.bridges.length).toBe(21); // twenty east–west roads' and the arterial's skewed one (the arterial took two crossings)
+    expect(plan.bridges.length).toBe(15); // fourteen east–west roads' inside the rim and the arterial's skewed one (the arterial took two crossings; the canal ends at the rim)
     expect(plan.stadium.masts.length).toBe(4);
     expect(plan.wheel.r).toBe(11.5);
     expect(plan.mega.top).toBeGreaterThan(100);
@@ -466,7 +466,8 @@ describe('The viaduct over its arterial (owner: roads that exist in real life)',
 
   it('sinks the canal, floors its bridges flush, and keeps the quay lamps out of the water', () => {
     expect(CANAL.water).toBeLessThan(-2);
-    expect(plan.bridges.filter((b) => b.yaw === 0).length).toBe(20);
+    expect(plan.bridges.filter((b) => b.yaw === 0).length).toBe(14);
+    for (const b of plan.bridges) expect(Math.abs(b.z), 'no bridge past the end of the canal').toBeLessThanOrEqual(CANAL_END);
     const skew = plan.bridges.filter((b) => b.yaw !== 0);
     expect(skew.length).toBe(1);
     expect(skew[0].w).toBeCloseTo(2 * ARTERIAL_ROW, 5);
@@ -747,6 +748,38 @@ describe('starPositions', () => {
     }
     expect(zenith).toBeGreaterThan(150); // the cap above 70° is ~6% of the sphere → ~220 of 4000
     for (const [i, n] of bins.entries()) expect(n, `elevation bin ${i * 10}°`).toBeGreaterThan(40);
+  });
+});
+
+describe('Plain borders (owner: no river, boulevard or highway outside the border — fill in buildings; the highway infinite both sides)', () => {
+  const plan = planCity(SEED);
+  it('ends the canal under the rim bridge and builds the avenues past it as blocks', () => {
+    expect(CANAL_END).toBe(streetAt(HALF) + STREET / 2);
+    const canal = plan.streets.find((s) => s.kind === 'canal')!;
+    expect(canal.z0).toBe(-CANAL_END); expect(canal.len).toBe(2 * CANAL_END);
+    expect(plan.posts.filter((p) => Math.abs(Math.abs(p.x) - 13) < 0.01 && p.h === 5.5 && Math.abs(p.z) > CANAL_END).length, 'quay posts past the end').toBe(0);
+    for (let i = 0; i < plan.lanterns.length; i += 3) if (Math.abs(Math.abs(plan.lanterns[i]) - 12.4) < 0.01) expect(Math.abs(plan.lanterns[i + 2]), 'a quay lantern past the end').toBeLessThanOrEqual(CANAL_END);
+    for (const t of plan.core.filter((s) => s.kind === 'tree' && Math.abs(Math.abs(s.z) - 7.5) < 0.01)) expect(Math.abs(t.x), 'an avenue tree past the rim').toBeLessThanOrEqual(streetAt(HALF));
+    const avenueLots = (along: 'x' | 'z') => plan.outer.filter((s) => s.kind === 'facade' && s.h >= 6 && (along === 'z' ? Math.abs(s.x) < 12 && Math.abs(s.z) > CANAL_END : Math.abs(s.z) < 12 && Math.abs(s.x) > CANAL_END));
+    expect(avenueLots('z').length, 'blocks on the canal column past the rim').toBeGreaterThan(8);
+    expect(avenueLots('x').length, 'blocks on the tree avenue past the rim').toBeGreaterThan(8);
+    expect(HW_FAR).toBe(1600);
+  });
+  it('fills the empty corridors of the copies with plain blocks: inside the square, clear of every counted mass, the plaza, the canal column, the boulevard and the citadel among them', () => {
+    expect(plan.filler.length).toBeGreaterThan(150);
+    const counted = [...plan.core, ...plan.outer].filter((s) => isMass(s) && !LANDMARK_ARCH.has(s.arch) && s.h >= 4 && s.kind !== 'tree' && s.arch !== 'street');
+    let overlaps = 0;
+    for (const f of plan.filler) {
+      expect(f.kind).toBe('facade'); expect(f.h).toBeGreaterThan(3); // (a set-back upper box is three-tenths of its base)
+      expect(Math.max(Math.abs(f.x) + f.w / 2, Math.abs(f.z) + f.d / 2), 'inside the built square').toBeLessThan(TILE_P / 2 + 0.01);
+      for (const m of counted) if (Math.min(f.x + f.w / 2, m.x + m.w / 2) - Math.max(f.x - f.w / 2, m.x - m.w / 2) > 1.5 && Math.min(f.z + f.d / 2, m.z + m.d / 2) - Math.max(f.z - f.d / 2, m.z - m.d / 2) > 1.5) overlaps++;
+    }
+    expect(overlaps, 'a filler box over a counted mass').toBe(0);
+    const near = (x: number, z: number, r: number) => plan.filler.some((f) => Math.abs(f.x - x) < r && Math.abs(f.z - z) < r);
+    expect(near(0, 0, 14), 'the plaza').toBe(true);
+    for (let b = 1; b <= HALF; b++) { expect(near(0, b * G, 14), `the canal column at bz=${b}`).toBe(true); expect(near(b * G, 0, 14), `the tree avenue at bx=${b}`).toBe(true); }
+    expect(near(CITADEL.x, CITADEL.z, 40), 'the citadel block').toBe(true);
+    expect(near((CITADEL.x - 24), (CITADEL.z - 24) - 2 * G, 60) || near(-190, -76, 20) || near(-76, -190, 20), 'along the boulevard').toBe(true);
   });
 });
 

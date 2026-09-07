@@ -41,6 +41,11 @@ export const BOUND = EXT + STREET; // the free-flight fence hugs the main city
 export const MEDIAN = LOT / 2; // the avenues' open middle: ±12 about the axis
 export const CAM_R = 1.2; // the camera's body
 export const REACH = (HALF + OUTER) * G + STREET; // how far streets, traffic and lamps run
+/** Where the canal ends (owner: no river outside the border): under the far edge of the rim street's bridge — from the
+ *  fence the water goes under the last bridge and no further; past it the avenue is blocks and streets. */
+export const CANAL_END = (HALF + 0.5) * G + STREET / 2;
+/** The highway runs on past both ends of the built square this far each way (owner: "infinite both sides"). */
+export const HW_FAR = 1600;
 /** THE EXPRESSWAY (owner: no viaduct over buildings, no ramp that could not exist): an elevated deck across the north on a
  *  9° skew to the grid, three lanes a side at a bus's width with parapets past them, over a surface ARTERIAL on the same
  *  axis — the Shuto over Route 246. The deck's top is at y + 0.4, its underside at y − 0.4; the piers' caps leave 9.2
@@ -227,6 +232,8 @@ export interface Plan {
   core: Solid[];
   outer: Solid[];
   sprawl: Solid[];
+  /** The tiles' filler (fillTiles): plain blocks for the corridors the copies leave empty; drawn only past the square. */
+  filler: Solid[];
   strips: Strip[];
   /** The doors of the city (every lit shopfront, every station entrance): where people go in and come out. */
   doors: { x: number; z: number }[];
@@ -466,7 +473,72 @@ export const MEGA_TEX = 21;
 export const SHANTY_TEX: [number, number] = [22, 23];
 const TARP = ['#2a5aa8', '#c8552c', '#3f7f5a', '#d9c26a', '#7a3d8f', '#c9c2b2', '#b03a3a'];
 const VEND = ['#ff3b3b', '#5df2ff', '#ffd23f', '#ff4fd8', '#3dff8f', '#f4f1e8'];
-const OUTER_PROFILE: Profile = { ...DISTRICTS.mid, lo: 6, hi: 24, stack: 1, kit: 0.3, signs: 0.3, over: 0, arcade: 0 };
+const OUTER_PROFILE: Profile = { ...DISTRICTS.mid, lo: 10, hi: 36, stack: 2, kit: 0.3, signs: 0.3, over: 0, arcade: 0 }; // (owner: the border packed — no step down at the fence)
+
+/** The masses the endless city's tiles copy (city3d.ts): the buildings, and any structural dark six up and over a unit
+ *  across (piers, tanks, legs); the kit stays home. The unique landmarks never copy (LANDMARK_ARCH). */
+const MASS_KINDS = new Set<Kind>(['facade', 'cyl', 'spire', 'pyr', 'dome', 'tree']);
+export const LANDMARK_ARCH = new Set<Arch>(['mega', 'landmark', 'citadel']);
+export const isMass = (s: Solid): boolean => MASS_KINDS.has(s.kind) || (s.kind === 'dark' && s.h >= 6 && Math.min(s.w, s.d) >= 1.2);
+
+/** THE TILES' FILLER (owner: "just fill in buildings" outside the border): the copies carry the square's masses alone —
+ *  no canal, no boulevard, no deck, no landmark — so the corridors those leave empty in every copy (the canal's column,
+ *  the tree avenue's median, the boulevard's diagonal, the arterial's band, the plaza, the landmarks' blocks) get plain
+ *  buildings: every block's lot is cut into four quarters; a quarter is taken when a counted mass (a copied one, four
+ *  up; trees and street kit don't count) overlaps it by more than 1.5 both ways; the free quarters join at random
+ *  into halves or the whole lot, and each piece is one facade box with the block's district heights and the block's
+ *  jitter, one in seven with a set-back upper box. Drawn only in the tiles, never in the square. Its own stream. */
+export function fillTiles(masses: Solid[], seed: number): Solid[] {
+  const rand = mulberry32(seed ^ 0xf111e7);
+  const counted = masses.filter((s) => isMass(s) && !LANDMARK_ARCH.has(s.arch) && s.h >= 4 && s.kind !== 'tree' && s.arch !== 'street');
+  const bi = (v: number) => Math.round(v / G); // the block a coordinate falls in (lot centres at bx·G)
+  const bucket = new Map<string, Solid[]>();
+  for (const m of counted) {
+    for (let i = bi(m.x - m.w / 2); i <= bi(m.x + m.w / 2); i++) for (let j = bi(m.z - m.d / 2); j <= bi(m.z + m.d / 2); j++) {
+      const k = `${i}:${j}`; const l = bucket.get(k); if (l) l.push(m); else bucket.set(k, [m]);
+    }
+  }
+  const taken = (x0: number, z0: number, x1: number, z1: number, list: Solid[]) =>
+    list.some((m) => Math.min(x1, m.x + m.w / 2) - Math.max(x0, m.x - m.w / 2) > 1.5 && Math.min(z1, m.z + m.d / 2) - Math.max(z0, m.z - m.d / 2) > 1.5);
+  const out: Solid[] = [];
+  const RIM = HALF + OUTER, Q = LOT / 2;
+  for (let bx = -RIM; bx <= RIM; bx++) {
+    for (let bz = -RIM; bz <= RIM; bz++) {
+      const list = bucket.get(`${bx}:${bz}`) ?? [];
+      const cx = bx * G, cz = bz * G;
+      const rect = (k: number): [number, number, number, number] => [cx + (k & 1 ? 0 : -Q), cz + (k & 2 ? 0 : -Q), cx + (k & 1 ? Q : 0), cz + (k & 2 ? Q : 0)]; // quarter k: bit 0 east, bit 1 south
+      const free = [0, 1, 2, 3].map((k) => { const r = rect(k); return !taken(r[0], r[1], r[2], r[3], list); });
+      const n = free.filter(Boolean).length;
+      if (n === 0) continue;
+      const pieces: [number, number, number, number][] = [];
+      const join = (a: number, b: number): [number, number, number, number] => { const p = rect(a), q = rect(b); return [Math.min(p[0], q[0]), Math.min(p[1], q[1]), Math.max(p[2], q[2]), Math.max(p[3], q[3])]; };
+      const r = rand();
+      if (n === 4 && r < 0.3) pieces.push([cx - Q, cz - Q, cx + Q, cz + Q]);
+      else if (n === 4 && r < 0.65) { if (rand() < 0.5) pieces.push(join(0, 2), join(1, 3)); else pieces.push(join(0, 1), join(2, 3)); }
+      else {
+        const used = [false, false, false, false];
+        for (const [a, b] of [[0, 1], [2, 3], [0, 2], [1, 3]]) if (free[a] && free[b] && !used[a] && !used[b] && rand() < 0.5) { used[a] = used[b] = true; pieces.push(join(a, b)); }
+        for (let k = 0; k < 4; k++) if (free[k] && !used[k]) pieces.push(rect(k));
+      }
+      const prof = Math.max(Math.abs(bx), Math.abs(bz)) <= HALF ? DISTRICTS[districtOf(bx, bz)] : OUTER_PROFILE;
+      const jit = blockJitter(bx, bz);
+      for (const [x0, z0, x1, z1] of pieces) {
+        const g = 0.8 + rand() * 0.8;
+        const w = x1 - x0 - 2 * g, d = z1 - z0 - 2 * g;
+        let h = (prof.lo + Math.pow(rand(), 1.3) * (prof.hi - prof.lo)) * jit;
+        if (rand() < 0.1) h *= 1.5; // the odd spike
+        h = Math.min(h, 110);
+        const x = (x0 + x1) / 2, z = (z0 + z1) / 2, tex = Math.floor(rand() * 18);
+        out.push({ kind: 'facade', arch: 'sprawl', tex, x, y: h / 2, z, w, h, d });
+        if (rand() < 0.14 && Math.min(w, d) > 8) { // a set-back upper box
+          const uw = w * 0.6, ud = d * 0.6, uh = h * 0.3;
+          out.push({ kind: 'facade', arch: 'sprawl', tex, x: x + (rand() - 0.5) * (w - uw) * 0.6, y: h + uh / 2, z: z + (rand() - 0.5) * (d - ud) * 0.6, w: uw, h: uh, d: ud });
+        }
+      }
+    }
+  }
+  return out;
+}
 
 interface Rect { x: number; z: number; w: number; d: number }
 
@@ -1784,7 +1856,6 @@ export function planCity(seed: number): Plan {
   for (let bx = -HALF - OUTER; bx <= HALF + OUTER; bx++) {
     for (let bz = -HALF - OUTER; bz <= HALF + OUTER; bz++) {
       if (Math.max(Math.abs(bx), Math.abs(bz)) <= HALF) continue;
-      if (bx === 0 || bz === 0) continue; // the avenues run on out of town
       if (reserved.has(key(bx, bz))) continue;
       buildLot({ x: bx * G, z: bz * G, w: LOT, d: LOT }, OUTER_PROFILE, false, blockJitter(bx, bz));
     }
@@ -2017,13 +2088,14 @@ export function planCity(seed: number): Plan {
     solid(core, 'dark', 'street', 0, x, 0.8, z, 0.34, 1.6, 0.34);
     solid(core, 'tree', 'street', 0, x, 1.6 + h / 2, z, 2.2 + rand() * 1.2, h, 2.2 + rand() * 1.2);
   };
-  for (let t = -REACH; t <= REACH; t += 7) {
+  const RIM_T = (HALF + 0.5) * G; // the avenues' dressing stops at the rim street: past it they are blocks and streets (owner: no boulevard outside the border)
+  for (let t = -RIM_T; t <= RIM_T; t += 7) {
     if (Math.abs(t) < 30 || onStreet(t)) continue; // the plaza, the crossings
     tree(t, -7.5); tree(t, 7.5);
     if (Math.round(t / 7) % 2 === 0) posts.push({ x: t, z: 0, h: 6 });
   }
   const bridges: Plan['bridges'] = [];
-  for (let j = -HALF - OUTER - 1; j <= HALF + OUTER; j++) {
+  for (let j = -HALF - 1; j <= HALF; j++) { // the crossings inside the rim: the water ends under the rim street's bridge (CANAL_END)
     const z = streetAt(j);
     if (!openX(j, 0)) continue; // the arterial took this crossing: its own bridge carries the road
     bridges.push({ x: 0, z, yaw: 0, w: 12, span: CANAL.w + 2, kind: Math.abs(j) % 5 }); // five builds, by position (owner: the stretch looked copycat)
@@ -2054,7 +2126,7 @@ export function planCity(seed: number): Plan {
     solid(core, 'dark', 'industry', 0, px - 0.75, 1.2, pz, 1.5, 0.5, 0.5); // the run from the house to it
     lantern(px, 3.4, pz + 1.8);
   }
-  for (let t = -REACH; t <= REACH; t += 9) {
+  for (let t = -RIM_T; t <= RIM_T; t += 9) {
     if (Math.abs(t) < 30 || onStreet(t)) continue;
     if (Math.abs(arterialLat(0, t)) < ARTERIAL_ROW + 3) continue; // the arterial's bridge
     if (Math.round(t / 9) % 2 === 0) { posts.push({ x: -13, z: t, h: 5.5 }); posts.push({ x: 13, z: t, h: 5.5 }); } // on the quay (owner: they stood in the water)
@@ -2513,7 +2585,7 @@ export function planCity(seed: number): Plan {
     lantern(tx, mt + 0.3, tz);
     extraBeacons.push({ x: mx, y: mt + 1.6, z: mz });
   }
-  streets.push({ x0: 0, z0: -REACH, dx: 0, dz: 1, len: 2 * REACH, y: CANAL.water + 0.3, kind: 'canal', width: CANAL.w });
+  streets.push({ x0: 0, z0: -CANAL_END, dx: 0, dz: 1, len: 2 * CANAL_END, y: CANAL.water + 0.3, kind: 'canal', width: CANAL.w }); // (the boats run its length: to the rim and back)
   for (let i = -HALF - 1; i <= HALF; i++) {
     for (let j = -HALF - 1; j <= HALF; j++) {
       if (rand() > 0.3) continue;
@@ -3044,8 +3116,9 @@ export function planCity(seed: number): Plan {
     const keptSigns = signs.filter((sg) => !(sg.kind === 'tag' && Math.abs(sg.y - 1.5) < 0.01 && gone.some((g) => Math.hypot(g.x - sg.x, g.z - sg.z) < 1.5))); // a kiosk's tag goes with it
     signs.length = 0; signs.push(...keptSigns);
   }
+  const filler = fillTiles([...core, ...outer], seed);
   return {
-    core, outer, sprawl, strips, leds, awnings, tarps, clutter, billboards, spots, signs, posts, lanterns, wires, vents, holos, stalls, sprawlLamps, neon,
+    core, outer, sprawl, filler, strips, leds, awnings, tarps, clutter, billboards, spots, signs, posts, lanterns, wires, vents, holos, stalls, sprawlLamps, neon,
     beacons, searchlights, pois, streets, stadium, wheel, mega, stacks, bridges, styles, sprawlTex, grid, landmark, roomAhead, air, pads, rail, piers, patches, parked, poles, superblocks, doors, lifts, subways,
     parties, perches, stages, gates, fireworks, cat, plazas, roofs,
   };
