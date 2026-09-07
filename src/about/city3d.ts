@@ -1642,7 +1642,9 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
       dummy.position.set(s.x, s.y, s.z);
       dummy.scale.set(s.w, s.h, s.d);
     }
+    dummy.rotation.set(0, s.rotY ?? 0, 0); // (the citadel's tiers are turned to face the boulevard)
     dummy.updateMatrix();
+    dummy.rotation.set(0, 0, 0);
     b.mats.push(dummy.matrix.clone());
     if (dressed) {
       const style = plan.styles[s.tex];

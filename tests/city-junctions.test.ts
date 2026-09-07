@@ -45,6 +45,16 @@ describe("the junctions' paint (owner: zebras painted over each other at the six
     expect(oblique).toBeGreaterThanOrEqual(5); // the boulevard's crossings
   });
 
+  it('ends each half of the boulevard at the crossing beside the citadel (owner: the boulevard cut)', () => {
+    for (const [x, z] of [[-171, -95], [-95, -171]]) {
+      const n = traffic.nodes.find((q) => Math.abs(q.x - x) < 0.6 && Math.abs(q.z - z) < 0.6)!;
+      expect(n, `a node at ${x},${z}`).toBeTruthy();
+      expect(n.streets.length).toBe(3); // the two grid roads (one a T there) and the boulevard's half
+      expect(n.streets.filter((s) => s.kind === 'diagonal').length).toBe(1);
+      expect(n.ports.filter((p) => p.link.street.kind === 'diagonal').length).toBe(1); // one arm: it ends here
+    }
+  });
+
   it("hulls a junction's mouths", () => {
     const h = convexHull([[0, 0], [4, 0], [4, 4], [0, 4], [2, 2], [1, 3]]);
     expect(h.length).toBe(4);

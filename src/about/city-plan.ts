@@ -51,7 +51,12 @@ export const HIGHWAY = { x0: -400, z0: 210, x1: 400, z1: 80, y: 11, width: 17 };
  *  line at ARTERIAL_ROW. Cells of any lot inside the right of way are dropped; the east–west streets it would eat close. */
 export const ARTERIAL = { w: 15, apron: 8.6, walk: 2.4 };
 export const ARTERIAL_ROW = ARTERIAL.w / 2 + ARTERIAL.apron + ARTERIAL.walk; // 18.5
-export const DIAGONAL = { x0: -247, z0: -19, x1: -19, z1: -247, width: 12 }; // the surface boulevard slashing the south-west: x + z = −266 runs it through seven grid crossings, T-ing into the avenue roads at both ends
+export const DIAGONAL = { x0: -247, z0: -19, x1: -19, z1: -247, width: 12 }; // the surface boulevard slashing the south-west: x + z = −266 ran it through seven grid crossings, T-ing into the avenue roads at both ends — CUT in two at the citadel's block (owner)
+/** THE CITADEL (owner: "cut the diagonal boulevard and build the citadel"): the 2×2 block the boulevard crossed corner to
+ *  corner, at its middle — a stepped ziggurat turned 45° so its faces meet the two halves squarely, a lit portal in
+ *  each, a crown, a hologram ring, a drone pad, annexes at the free corners, a forecourt at each boulevard corner where
+ *  the halves end. The halves end at the six-ways at (−171, −95) and (−95, −171), five-ways now. */
+export const CITADEL = { bx: -4, bz: -4, x: -133, z: -133, tier: [44, 34, 24, 14], tierH: [22, 24, 24, 24] };
 /** The north–south avenue's water, sunk between quay walls (owner: the bridges' approach wedges sat inside the quay
  *  crossings); every bridge deck is flush with the streets, a boat's cabin passes under with 0.7 to spare. */
 export const CANAL = { w: 24, water: -2.6, deck: 0.05 };
@@ -70,10 +75,10 @@ export type Kind = 'facade' | 'dark' | 'cyl' | 'pyr' | 'spire' | 'dome' | 'tree'
 export type Arch =
   | 'tower' | 'slab' | 'cyl' | 'ziggurat' | 'twin' | 'cross' | 'needle' | 'podium' | 'low' | 'block'
   | 'oldtown' | 'landmark' | 'sprawl' | 'bits' | 'street' | 'bridge' | 'temple' | 'industry' | 'mega' | 'shanty'
-  | 'annex' | 'over';
-export interface Solid extends Box { kind: Kind; tex: number; arch: Arch }
+  | 'annex' | 'over' | 'citadel';
+export interface Solid extends Box { kind: Kind; tex: number; arch: Arch; /** A turn about y (the citadel's tiers); the grid holds the turned box's bounds. */ rotY?: number }
 /** The archetypes whose ground floor never carries a shopfront strip. */
-export const NO_SHOP = new Set<Arch>(['bits', 'street', 'bridge', 'temple', 'industry', 'shanty', 'sprawl', 'over', 'annex']);
+export const NO_SHOP = new Set<Arch>(['bits', 'street', 'bridge', 'temple', 'industry', 'shanty', 'sprawl', 'over', 'annex', 'citadel']);
 /** Whether a body wears the atlas' SHOPFRONT STRIP on its ground floor (the renderer paints it; the kit keeps off it):
  *  a facade standing on the ground, over five tall, six wide each way, of an archetype that has shops. */
 export const hasShop = (s: Solid): boolean => s.kind === 'facade' && s.y - s.h / 2 < 0.6 && s.h > 5 && Math.min(s.w, s.d) >= 6 && !NO_SHOP.has(s.arch);
@@ -527,6 +532,30 @@ export function planCity(seed: number): Plan {
     const s: Solid = { kind, arch, tex, x, y, z, w, h, d };
     list.push(s);
     grid.add(s);
+    return s;
+  };
+  /** A solid TURNED about y: the list gets the box with its turn (the renderer turns the instance); the grid gets the
+   *  turned outline in BANDS across z, each an axis-aligned box just wide enough for the outline in its band (one box
+   *  the turned square's full width would have covered the citadel's whole block, forecourts and all). */
+  const solidTurned = (list: Solid[], kind: Kind, arch: Arch, tex: number, x: number, y: number, z: number, w: number, h: number, d: number, rotY: number): Solid => {
+    const s: Solid = { kind, arch, tex, x, y, z, w, h, d, rotY };
+    list.push(s);
+    const c = Math.cos(rotY), sn = Math.sin(rotY);
+    const corners: [number, number][] = [[-w / 2, -d / 2], [w / 2, -d / 2], [w / 2, d / 2], [-w / 2, d / 2]].map(([u, v]) => [u * c + v * sn, -u * sn + v * c]); // about the centre, in the plan's frame
+    const zs = corners.map((p) => p[1]), zMin = Math.min(...zs), zMax = Math.max(...zs);
+    const n = Math.max(1, Math.ceil((zMax - zMin) / Math.min(6, Math.max(1.2, Math.min(w, d))))); // bands no deeper than the thinner side: a turned bar hugs its line
+    for (let k = 0; k < n; k++) {
+      const z0 = zMin + (zMax - zMin) * k / n, z1 = zMin + (zMax - zMin) * (k + 1) / n;
+      let xMin = Infinity, xMax = -Infinity;
+      for (let i = 0; i < 4; i++) { // the outline within the band: its corners in it, its edges' crossings of the band's lines
+        const a = corners[i], b = corners[(i + 1) % 4];
+        if (a[1] >= z0 - 1e-9 && a[1] <= z1 + 1e-9) { xMin = Math.min(xMin, a[0]); xMax = Math.max(xMax, a[0]); }
+        for (const zz of [z0, z1]) {
+          if ((a[1] - zz) * (b[1] - zz) < 0) { const u = (zz - a[1]) / (b[1] - a[1]); const xx = a[0] + (b[0] - a[0]) * u; xMin = Math.min(xMin, xx); xMax = Math.max(xMax, xx); }
+        }
+      }
+      if (xMax > xMin) grid.add({ x: x + (xMin + xMax) / 2, y, z: z + (z0 + z1) / 2, w: xMax - xMin, h, d: z1 - z0 });
+    }
     return s;
   };
   const texOf = (pred: (s: FacadeStyle) => boolean): number => {
@@ -1479,12 +1508,14 @@ export function planCity(seed: number): Plan {
   for (const [bx, bz] of [[-6, -5], [6, 6], [2, -7]]) reserved.set(key(bx, bz), 'flea'); // the flea markets
   for (const [bx, bz] of [[-7, 6], [7, -2], [-4, 7], [6, -6]]) reserved.set(key(bx, bz), 'favela'); // the poor quarters
   for (const bx of [-4, 4]) for (const bz of [-1, 1]) reserved.set(key(bx, bz), 'gate'); // the gates' towers, either side of the avenue
+  for (const [bx, bz] of [[CITADEL.bx, CITADEL.bz], [CITADEL.bx + 1, CITADEL.bz], [CITADEL.bx, CITADEL.bz + 1], [CITADEL.bx + 1, CITADEL.bz + 1]]) reserved.set(key(bx, bz), 'citadel');
   // closed street segments: a north–south street line i closed alongside
   // block row j (closedZ), an east–west line i closed alongside column j (closedX)
   const closedZ = new Set<string>();
   const closedX = new Set<string>();
   closedZ.add('-5:3'); closedZ.add('-5:4'); closedX.add('3:-5'); closedX.add('3:-4'); // the stadium
   closedZ.add('3:-3'); closedZ.add('3:-4'); closedX.add('-4:3'); closedX.add('-4:4'); // the megastructure
+  closedZ.add(`${CITADEL.bx}:${CITADEL.bz}`); closedZ.add(`${CITADEL.bx}:${CITADEL.bz + 1}`); closedX.add(`${CITADEL.bz}:${CITADEL.bx}`); closedX.add(`${CITADEL.bz}:${CITADEL.bx + 1}`); // the citadel's block
   const merged = new Map<string, 'x' | 'z' | '4'>(); // the first block of a merged pair → merge axis ('4': a 2×2 superblock)
   const swallowed = new Set<string>();
   const noMerge = new Set<string>(); // blocks the arterial's junctions need whole
@@ -2099,11 +2130,58 @@ export function planCity(seed: number): Plan {
     const gx = DIAGONAL.x1 - DIAGONAL.x0, gz = DIAGONAL.z1 - DIAGONAL.z0;
     const glen = Math.hypot(gx, gz);
     const gdx = gx / glen, gdz = gz / glen;
-    streets.push({ x0: DIAGONAL.x0, z0: DIAGONAL.z0, dx: gdx, dz: gdz, len: glen, y: 0, kind: 'diagonal', width: DIAGONAL.width });
+    // THE CUT (owner): the boulevard stops at the six-ways either side of the citadel's block — two halves
+    const cutA = (streetAt(CITADEL.bx - 1) - DIAGONAL.x0) / gdx, cutB = (streetAt(CITADEL.bx + 1) - DIAGONAL.x0) / gdx; // where it met the streets west and east of the block (the lines either side of its two lots)
+    streets.push({ x0: DIAGONAL.x0, z0: DIAGONAL.z0, dx: gdx, dz: gdz, len: cutA, y: 0, kind: 'diagonal', width: DIAGONAL.width });
+    streets.push({ x0: DIAGONAL.x0 + gdx * cutB, z0: DIAGONAL.z0 + gdz * cutB, dx: gdx, dz: gdz, len: glen - cutB, y: 0, kind: 'diagonal', width: DIAGONAL.width });
     for (let t = 6; t < glen; t += 12) {
+      if (t > cutA - 4 && t < cutB + 4) continue; // (the citadel's block)
       const x = DIAGONAL.x0 + gdx * t, z = DIAGONAL.z0 + gdz * t;
       if (onStreet(x) || onStreet(z)) continue;
       for (const s of [-1, 1]) posts.push({ x: x - gdz * s * 6.1, z: z + gdx * s * 6.1, h: 5.5 }); // at the boulevard's kerb: its walkers pass outside them
+    }
+    // THE CITADEL: a stepped ziggurat of four tiers turned 45° on the block's centre — its faces square to the boulevard's
+    // halves — a crown spire, a hologram ring, a lit portal in each boulevard face under a giant screen, a drone pad on the
+    // third tier, two annexes at the free corners with LED edges, a paved forecourt at each boulevard corner (a crowd zone,
+    // lamps, a string of lanterns, a board), the whole block paved; a point of interest, a beacon on the spire
+    {
+      const cx = CITADEL.x, cz = CITADEL.z, turn = Math.PI / 4, tex = texOf((s) => s.win === 'strip');
+      patches.push({ x: cx, z: cz, w: 2 * G - STREET + 2, d: 2 * G - STREET + 2 }); // the block's paving, over the closed inner crossing
+      let top = 0;
+      CITADEL.tier.forEach((w, k) => { const h = CITADEL.tierH[k]; solidTurned(core, 'facade', 'citadel', tex, cx, top + h / 2, cz, w, h, w, turn); top += h; }); // 22, 46, 70, 94
+      noteTall(cx, cz, top, CITADEL.tier[3], CITADEL.tier[3]);
+      solid(core, 'spire', 'citadel', 0, cx, top + 9, cz, 1.6, 18, 1.6); // the crown, to 112
+      extraBeacons.push({ x: cx, y: top + 19.5, z: cz });
+      holos.push({ x: cx, y: top + 26, z: cz, w: 24, h: 6, rotY: 0, kind: 'ring' });
+      for (let k = 0; k < 3; k++) { // the tiers' edges lit: a lantern at each turned corner
+        const r = CITADEL.tier[k] / Math.SQRT2, y = CITADEL.tierH.slice(0, k + 1).reduce((a, b) => a + b, 0) + 0.6;
+        for (const [ux, uz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) lantern(cx + ux * r, y, cz + uz * r);
+      }
+      for (const s of [-1, 1] as const) { // the two boulevard faces: s = −1 toward (−164, −102), +1 toward (−102, −164)
+        const fx = -s / Math.SQRT2, fz = s / Math.SQRT2; // the face's outward normal (along the boulevard, away from the centre)
+        const face = CITADEL.tier[0] / 2, mx = cx + fx * face, mz = cz + fz * face; // the face's midpoint
+        const along = [fz, -fx] as const; // along the face
+        solidTurned(core, 'dark', 'citadel', 0, mx + fx * 0.6, 4.5, mz + fz * 0.6, 14, 9, 1.6, -turn); // THE PORTAL: a dark bay proud of the face, nine tall (turned the other way: along the face, not the boulevard)
+        for (const e of [-1, 1]) { // amber jambs, lit
+          leds.push({ x: mx + fx * 1.5 + along[0] * e * 6.6, y: 4.5, z: mz + fz * 1.5 + along[1] * e * 6.6, w: 0.24, h: 9, d: 0.24, color: '#ffb36b' });
+          lantern(mx + fx * 2.2 + along[0] * e * 5, 3.2, mz + fz * 2.2 + along[1] * e * 5);
+        }
+        signs.push({ x: mx + fx * 1.0, y: 15.5, z: mz + fz * 1.0, rotY: Math.atan2(fx, fz), w: 16, h: 8, color: '#5df2ff', kind: 'screen' }); // the giant screen over the portal
+        signs.push({ x: cx + fx * (CITADEL.tier[1] / 2 + 0.8), y: 22 + 14, z: cz + fz * (CITADEL.tier[1] / 2 + 0.8), rotY: Math.atan2(fx, fz), w: 12, h: 6, color: '#ff4fd8', kind: 'screen' }); // and one on the second tier
+        // THE FORECOURT at the block's corner: the crowd zone between the face and the corner, lamps, a string of lanterns, a board
+        const qx = cx + fx * 33, qz = cz + fz * 33; // (the face lies 22 along the boulevard from the centre, the block's corner 44)
+        plazas.push({ x: qx, z: qz, w: 13, d: 13 });
+        for (const e of [-1, 1]) posts.push({ x: qx + along[0] * e * 8, z: qz + along[1] * e * 8, h: 5.5 });
+        for (let k = -3; k <= 3; k++) lantern(mx + fx * 6 + along[0] * k * 3, 4.6, mz + fz * 6 + along[1] * k * 3);
+        signs.push({ x: qx + along[0] * 9 + fx * 2, y: 3.4, z: qz + along[1] * 9 + fz * 2, rotY: Math.atan2(fx, fz), w: 4, h: 2, color: signColor(rand), kind: 'board' });
+      }
+      for (const s of [-1, 1] as const) { // THE ANNEXES at the free corners, axis-aligned, twelve tall, LED-edged
+        const ax = cx + s * 24, az = cz + s * 24;
+        solid(core, 'facade', 'citadel', texOf((q) => q.win === 'ribbon'), ax, 6, az, 14, 12, 14);
+        for (const e of [-1, 1]) { leds.push({ x: ax, y: 12.1, z: az + e * 7, w: 14.2, h: 0.14, d: 0.14, color: '#C8FF00' }); leds.push({ x: ax + e * 7, y: 12.1, z: az, w: 0.14, h: 0.14, d: 14.2, color: '#C8FF00' }); }
+        solid(core, 'dark', 'citadel', 0, ax + s * 3, 13.2, az - s * 3, 3, 2.4, 3); // a plant room on the roof
+      }
+      pois.push({ x: cx, y: 60, z: cz, w: 5 });
     }
   }
 
@@ -2695,6 +2773,7 @@ export function planCity(seed: number): Plan {
   air.push({ kind: 'patrol', loop: true, speed: 0.16, pts: lift([[streetAt(-2), 36, streetAt(-2)], [streetAt(2), 36, streetAt(-2)], [streetAt(2), 36, streetAt(2)], [streetAt(-2), 36, streetAt(2)]], true, 8) });
   air.push({ kind: 'patrol', loop: true, speed: 0.15, pts: lift([[streetAt(-5), 36, streetAt(-1)], [streetAt(-1), 36, streetAt(-1)], [streetAt(-1), 36, streetAt(-5)], [streetAt(-5), 36, streetAt(-5)]], true, 8) });
   const pads = tall.slice(0, 6).map((t) => ({ x: t.x, y: t.top + 0.2, z: t.z }));
+  pads.push({ x: CITADEL.x, y: CITADEL.tierH[0] + CITADEL.tierH[1] + CITADEL.tierH[2] + 0.2, z: CITADEL.z }); // the citadel's drone pad, on its third tier
   // FIREWORKS SITES (owner: fireworks periodically flying around the whole city): a flat roof in each of eight sectors
   // (top 20–70, off the pads), and the stadium
   const fireworks: Plan['fireworks'] = [{ x: stadium.x, y: stadium.h + 4, z: stadium.z }];

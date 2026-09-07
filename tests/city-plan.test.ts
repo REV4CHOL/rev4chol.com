@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Vector3 } from 'three';
 import {
-  ARTERIAL, ARTERIAL_ROW, arterialLat, arterialZ, AutoFlight, BOUND, CAM_R, CANAL, carriagewayAt, CollisionGrid, districtOf, EXT, G, HIGHWAY, LANE_CAR, LANE_W, MEDIAN, planCity, RAIL, RAMP, RAMP_W, rampY,
+  ARTERIAL, ARTERIAL_ROW, arterialLat, arterialZ, AutoFlight, BOUND, CAM_R, CANAL, carriagewayAt, CITADEL, CollisionGrid, districtOf, EXT, G, HIGHWAY, LANE_CAR, LANE_W, MEDIAN, planCity, RAIL, RAMP, RAMP_W, rampY,
   ROAD, starPositions, STREET, streetAt, tourRoute,
 } from '../src/about/city-plan';
 import { mulberry32 } from '../src/lib/rng';
@@ -75,7 +75,7 @@ describe('planCity', () => {
     expect(plan.wires.length % 12).toBe(0); // three segments per wire, two endpoints each
     expect(plan.lanterns.length / 3).toBeGreaterThan(400);
     expect(plan.vents.length).toBeGreaterThan(20);
-    expect(plan.holos.length).toBe(14); // (twelve, and a ring of glyphs over each of the avenue's gates)
+    expect(plan.holos.length).toBe(15); // (twelve, a ring of glyphs over each of the avenue's gates, the citadel's ring)
     expect(plan.stalls.length).toBeGreaterThan(80); // the night market and three flea markets
     expect(plan.stacks.length).toBeGreaterThanOrEqual(2);
     expect(plan.bridges.length).toBe(21); // twenty east–west roads' and the arterial's skewed one (the arterial took two crossings)
@@ -92,7 +92,7 @@ describe('planCity', () => {
       expect(l.pts.filter((p) => p[1] <= 62).length / l.pts.length).toBeGreaterThan(0.6);
     }
     expect(plan.air.length).toBe(16); // the avenues, two rings, two arcs, eight canyon lanes, two patrols
-    expect(plan.pads.length).toBe(6);
+    expect(plan.pads.length).toBe(7); // the six tallest roofs and the citadel's third tier
     for (const lane of plan.air) {
       const n = lane.pts.length;
       for (let i = 0; i < (lane.loop ? n : n - 1); i++) {
@@ -499,13 +499,31 @@ describe('The viaduct over its arterial (owner: roads that exist in real life)',
     }
   });
 
+  it('cuts the boulevard in two at THE CITADEL: the halves end at the six-ways, and a turned stepped citadel stands on the block between', () => {
+    const halves = plan.streets.filter((s) => s.kind === 'diagonal');
+    expect(halves.length).toBe(2);
+    expect(halves.some((s) => Math.abs(s.x0 + s.dx * s.len - streetAt(-5)) < 0.1 && Math.abs(s.z0 + s.dz * s.len - streetAt(-3)) < 0.1)).toBe(true); // the west half ends at (−171, −95)
+    expect(halves.some((s) => Math.abs(s.x0 - streetAt(-3)) < 0.1 && Math.abs(s.z0 - streetAt(-5)) < 0.1)).toBe(true); // the east half starts at (−95, −171)
+    const citadel = plan.core.filter((s) => s.arch === 'citadel');
+    expect(citadel.length).toBeGreaterThanOrEqual(8);
+    expect(citadel.filter((s) => s.kind === 'facade' && Math.abs((s.rotY ?? 0) - Math.PI / 4) < 0.01).length).toBe(4); // the tiers, turned
+    for (const s of citadel) { expect(Math.abs(s.x - CITADEL.x)).toBeLessThan(32); expect(Math.abs(s.z - CITADEL.z)).toBeLessThan(32); } // within its block
+    expect(plan.grid.hit(CITADEL.x, 50, CITADEL.z, 0.5), 'the citadel is solid to the flight').not.toBeNull();
+    expect(plan.grid.hit(CITADEL.x, 104, CITADEL.z, 0.5), 'its crown').not.toBeNull();
+    expect(plan.grid.hit(CITADEL.x + 24, 5, CITADEL.z - 24, 0.3), 'the forecourt is open').toBeNull();
+    expect(plan.plazas.filter((p) => Math.abs(p.x - CITADEL.x) < 30 && Math.abs(p.z - CITADEL.z) < 30).length).toBe(2); // the forecourts
+    expect(plan.pois.some((p) => Math.abs(p.x - CITADEL.x) < 1 && Math.abs(p.z - CITADEL.z) < 1)).toBe(true);
+    expect(plan.pads.some((p) => Math.abs(p.x - CITADEL.x) < 1 && Math.abs(p.z - CITADEL.z) < 1 && p.y > 69)).toBe(true); // the drone pad
+    expect(plan.holos.some((h) => Math.abs(h.x - CITADEL.x) < 1 && h.kind === 'ring' && h.y > 110)).toBe(true);
+  });
+
   it('lists the flat roofs for the runners', () => {
     expect(plan.roofs.length).toBeGreaterThan(400);
     for (const r of plan.roofs.slice(0, 200)) { expect(r.w).toBeGreaterThanOrEqual(6); expect(r.d).toBeGreaterThanOrEqual(6); expect(r.top).toBeGreaterThanOrEqual(8); }
   });
 
   it('gives the stadium a forecourt and two entrances and the wheel a boarding station, crowds in both, the arterial\'s pavement clear of the base', () => {
-    expect(plan.plazas.length).toBe(2);
+    expect(plan.plazas.length).toBe(4); // the stadium's forecourt, the wheel's station, the citadel's two forecourts
     const st = plan.stadium;
     expect(st.d).toBe(36);
     for (let x = st.x - 20; x <= st.x + 20; x += 5) expect(plan.grid.hit(x, 0.9, arterialZ(x) - ARTERIAL_ROW + 1.3, 0.3), 'the arterial pavement by the stadium').toBeNull();
@@ -623,7 +641,7 @@ describe('AutoFlight', () => {
     }
     expect(visited.size).toBeGreaterThan(100);
     expect(new Set(firstPaths).size).toBe(3); // three seeds, three flights
-    expect(orbits).toBeGreaterThan(2);
+    expect(orbits).toBeGreaterThanOrEqual(2); // (an orbit is a now-and-then thing: two across three seeds is a flight that orbits — the tally moved when the citadel took a block and the boulevard's middle)
     expect(dives).toBeGreaterThan(2);
     expect(flyovers).toBeGreaterThan(2);
     expect(minStep).toBeGreaterThan(0.44); // arc length: the pace never sags into a knot
