@@ -1192,7 +1192,7 @@ export interface CityRide {
   tick(n?: number): void;
   pose(): { x: number; y: number; z: number; yaw: number; pitch: number; mode: FlyMode; dir: number[] };
   /** The quality tier in force (far plane, fog, shadows, pixel size) — and a way to force one. */
-  quality(): { tier: string; far: number; fog: number; shadows: boolean; pix: number };
+  quality(): { tier: string; far: number; fog: number; shadows: boolean; pix: number; /** The render scale over CSS pixels (a phone adapts it) and the buffer size. */ scale: number; render: [number, number] };
   /** The last frame's costs in ms, and a jitter probe: how much the frame's centre changes as the eye slides a hair. */
   timings(): { traffic: number; people: number; rest: number; render: number };
   shimmer(steps?: number, slide?: number): number;
@@ -1232,6 +1232,13 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   let tier = startTier();
   const pixOf = (t: number) => (isMobile() ? 2 : TIERS[t].pix); // a phone renders at half its pixels like a desktop (owner: the city froze on a phone — at its own pixels it pushed three times a desktop's through three passes)
   let PIX = pixOf(tier);
+  // A PHONE'S PIXELS (owner: the city looked too blurry on mobile): the canvas was sized in CSS pixels over PIX with the
+  // device pixel ratio ignored — a phone at a ratio of 3 rendered 195 wide and stretched it sixfold. A phone renders at
+  // its CSS size times `phoneScale`: its ratio capped at 2, over 1.6 (a ratio-3 phone: 1.25× CSS, 488 wide on a 390
+  // screen — about a desktop's half-resolution pixel count), and the scale ADAPTS to the frame: down by a fifth while a
+  // render averages over 26 ms, back up while under 14; floor 0.6× CSS, ceiling the ratio's.
+  const phoneCeil = Math.min(window.devicePixelRatio || 1, 2) / 1.6;
+  let phoneScale = phoneCeil, phoneRenderSum = 0;
   const fog = new FogExp2('#0c1826', TIERS[tier].fog);
   scene.fog = fog;
 
@@ -3836,8 +3843,9 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   const fit = () => {
     const w = Math.max(1, canvas.clientWidth);
     const h = Math.max(1, canvas.clientHeight);
-    renderer.setSize(Math.ceil(w / PIX), Math.ceil(h / PIX), false);
-    composer.setSize(Math.ceil(w / PIX), Math.ceil(h / PIX));
+    const s = isMobile() ? phoneScale : 1 / PIX;
+    renderer.setSize(Math.ceil(w * s), Math.ceil(h * s), false);
+    composer.setSize(Math.ceil(w * s), Math.ceil(h * s));
     camera.aspect = w / h;
     camera.fov = fov24(camera.aspect); // a 24mm across the long edge
     camera.updateProjectionMatrix();
@@ -3904,6 +3912,15 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     cruiseCraft();
     timing.rest = performance.now() - t0;
     if (tick % 30 === 0) { const cost = timing.traffic + peopleCost; if (cost > 14) peopleSlow = true; else if (cost < 7) peopleSlow = false; }
+    if (isMobile()) { // the phone's render scale follows its frame
+      phoneRenderSum += timing.render;
+      if (tick % 60 === 0) {
+        const avg = phoneRenderSum / 60, was = phoneScale;
+        phoneRenderSum = 0;
+        if (avg > 26) phoneScale = Math.max(0.6, phoneScale * 0.8); else if (avg < 14) phoneScale = Math.min(phoneCeil, phoneScale * 1.15);
+        if (Math.abs(phoneScale - was) > 0.01) fit();
+      }
+    }
   };
   driveCars(); runTrains(); runCabs(); walkPeople(); runRoofs(); fly(); flyAir(); playMatch(); cruiseCraft(); breathe();
   fit();
@@ -3992,7 +4009,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
       camera.getWorldDirection(fwd);
       return { x: camera.position.x, y: camera.position.y, z: camera.position.z, yaw: free.yaw, pitch: free.pitch, mode, dir: [fwd.x, fwd.y, fwd.z] };
     },
-    quality: () => ({ tier: TIERS[tier].label, far: camera.far, fog: fog.density, shadows: renderer.shadowMap.enabled && moonLight.shadow.intensity > 0, pix: PIX }),
+    quality: () => ({ tier: TIERS[tier].label, far: camera.far, fog: fog.density, shadows: renderer.shadowMap.enabled && moonLight.shadow.intensity > 0, pix: PIX, scale: isMobile() ? phoneScale : 1 / PIX, render: [renderer.domElement.width, renderer.domElement.height] }),
     timings: () => ({ ...timing }),
     shimmer: (steps = 6, slide = 0.04) => { // how much a patch at the frame's centre changes as the eye slides sideways a hair: a jitter metric (0 = stable)
       const gl = renderer.getContext();

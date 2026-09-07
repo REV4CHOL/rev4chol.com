@@ -54,6 +54,17 @@ async function armFlight(site: SiteContent): Promise<void> {
   if (!canvas) return;
   const { mountCity3D } = await import('../about/city3d');
   const ride = mountCity3D(canvas, hashSlug('revachol-night-city'));
+  // THE FILM LAYERS OFF THE CITY (owner: "the whole city is having this window glitch" — the site's grain, a 1:1 noise
+  // tile re-dealt every frame and composited overlay, lands hardest on mid-grey, and the city's dark glass is mid-grey:
+  // every unlit pane crawled with static; the scanlines banded the panes over it). The canvas fills the viewport, so
+  // the layers' punched hole (the one the film player uses) is the whole layer here: raw glass, the chrome keeps nothing
+  // it would miss.
+  for (const el of [document.getElementById('grain'), document.querySelector<HTMLElement>('.scan-layer')]) {
+    if (!el) continue;
+    el.classList.add('has-hole');
+    el.style.setProperty('--hole-x', '0px'); el.style.setProperty('--hole-y', '0px');
+    el.style.setProperty('--hole-w', '100%'); el.style.setProperty('--hole-h', '100%');
+  }
   (window as unknown as { rvlRide: typeof ride }).rvlRide = ride; // debug handle for verification
 
   // -- the flight dial: TOUR (the scroll story) / AUTO (endless drift) /
