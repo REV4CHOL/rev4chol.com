@@ -43,7 +43,7 @@ import { isMobile, reducedMotion } from '../lib/env';
 import { mulberry32 } from '../lib/rng';
 import {
   AirLane, ART_COLOR, ARTERIAL, ARTERIAL_ROW, arterialLat, ARTS, AutoFlight, bandPoint, bandPositions, BOUND, CAM_R, CANAL, DIAGONAL, EXT, G, HALF, HIGHWAY, HoloKind, LANE_CAR, LANE_W, OUTER,
-  planCity, Poi, RAIL, RAMP_W, rampY, ROAD, Sign, signColor, Solid, starPositions, streetAt, STREET, Street, tourRoute,
+  hasShop, planCity, Poi, RAIL, RAMP_W, rampY, ROAD, Sign, signColor, Solid, starPositions, streetAt, STREET, Street, tourRoute,
 } from './city-plan';
 import { fov24, LensPass, lensTarget } from './city-post';
 import { CityAudio } from './city-audio';
@@ -1613,7 +1613,6 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   interface Bucket { kind: Solid['kind']; key: string; far: boolean; mats: Matrix4[]; skins: number[]; tints: number[] }
   const buckets = new Map<string, Bucket>();
   const shopfronts: { x: number; z: number; w: number; d: number }[] = []; // lit ground floors: they wash the pavement before them
-  const NO_SHOP = new Set<Solid['arch']>(['bits', 'street', 'bridge', 'temple', 'industry', 'shanty', 'sprawl', 'over', 'annex']);
   const place = (s: Solid, far: boolean) => {
     if (far && Math.max(Math.abs(s.x), Math.abs(s.z)) > 470) return; // past the fog of war's wall: never seen, not built
     if (s.arch === 'bridge' && s.kind === 'dark' && s.w > 20) return; // the canal's bridges are built below, not as slabs
@@ -1636,7 +1635,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     b.mats.push(dummy.matrix.clone());
     if (dressed) {
       const style = plan.styles[s.tex];
-      const shop = !far && s.y - s.h / 2 < 0.6 && s.h > 5 && Math.min(s.w, s.d) >= 6 && !NO_SHOP.has(s.arch) ? 1 : 0;
+      const shop = !far && hasShop(s) ? 1 : 0; // (the plan's rule: the kit keeps off the strip)
       const crown = style.crown && s.kind === 'facade' && s.h > 18 ? 1 : 0;
       b.skins.push(skinFor(s.tex, style, rand()), rand(), shop, crown);
       b.tints.push(...tintJitter(rand(), rand()));

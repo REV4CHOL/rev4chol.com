@@ -6,6 +6,8 @@ import {
 } from '../src/about/city-plan';
 import { mulberry32 } from '../src/lib/rng';
 import { streetPoint } from '../src/about/city-traffic';
+import { FAMILIES, FLOOR as SKIN_FLOOR, PX as SKIN_PX, SHOP as SKIN_SHOP } from '../src/about/city-skins';
+import { hasShop } from '../src/about/city-plan';
 import { hashSlug } from '../src/project/dossier';
 
 const SEED = hashSlug('revachol-night-city');
@@ -204,6 +206,46 @@ describe('Newport City, layered (owner: messy, overlapping, Ghost in the Shell)'
     expect(districtOf(-7, 1)).toBe('strip');
     expect(districtOf(-4, -4)).toBe('strip'); // on the diagonal boulevard
     expect(districtOf(6, 5)).toBe('mid');
+  });
+
+  it('hangs every condenser on a spandrel — the blank band between two floors of its wall, never on a window', () => {
+    const bodies = [...plan.core, ...plan.outer].filter((s) => s.kind === 'facade' && s.h >= 6);
+    const acs = plan.clutter.filter((c) => c.kind === 'ac' && c.w < 0.7); // the wall units (a roof row is 0.9 wide)
+    expect(acs.length).toBeGreaterThan(600);
+    let checked = 0;
+    for (let i = 0; i < acs.length; i += 7) {
+      const c = acs[i];
+      const walls = bodies.filter((s) => Math.abs(c.y - s.y) < s.h / 2 && ((Math.abs(Math.abs(c.x - s.x) - s.w / 2 - 0.28) < 0.05 && Math.abs(c.z - s.z) <= s.d / 2) || (Math.abs(Math.abs(c.z - s.z) - s.d / 2 - 0.28) < 0.05 && Math.abs(c.x - s.x) <= s.w / 2)));
+      if (!walls.length) continue; // (a unit under an annex's wall, or a wall the sample missed: not the wall in question)
+      const fits = walls.some((body) => { // one of the bodies sharing that wall plane hung it on its own spandrel
+        const fam = FAMILIES.find((f) => f.win === plan.styles[body.tex].win)!;
+        const base = hasShop(body) ? SKIN_SHOP / SKIN_PX : 0, pitch = SKIN_FLOOR / SKIN_PX;
+        const lo = (fam.wy + fam.wh) / SKIN_PX, hi = pitch + fam.wy / SKIN_PX; // the window's top .. the next sill (the band crosses the floor line)
+        let up = (((c.y - base) % pitch) + pitch) % pitch; // up from its floor's bottom
+        if (up + c.h / 2 < lo) up += pitch; // (a unit just past the floor line belongs to the band below it)
+        return up - c.h / 2 >= lo - 0.02 && up + c.h / 2 <= hi + 0.02;
+      });
+      expect(fits, `a condenser at ${c.x.toFixed(1)},${c.y.toFixed(2)},${c.z.toFixed(1)} off the spandrel of every wall it hangs on`).toBe(true);
+      checked += 1;
+    }
+    expect(checked).toBeGreaterThan(60);
+  });
+
+  it('rails every balcony slab and fire-escape platform on three sides', () => {
+    const rails = plan.clutter.filter((c) => c.kind === 'rail');
+    const near = (x: number, z: number, r: number) => rails.filter((q) => Math.abs(q.x - x) <= r && Math.abs(q.z - z) <= r);
+    const slabs = plan.core.filter((s) => s.kind === 'dark' && s.arch === 'bits' && (s.h === 0.22 || s.h === 0.12) && (s.w === 0.9 || s.d === 0.9) && Math.max(s.w, s.d) >= 2);
+    expect(slabs.length).toBeGreaterThan(200);
+    let checked = 0;
+    for (let i = 0; i < slabs.length; i += 3) {
+      const s = slabs[i];
+      const here = near(s.x, s.z, Math.max(s.w, s.d) / 2 + 0.6).filter((q) => Math.abs(q.y - s.y) < 0.8);
+      const front = here.filter((q) => q.w >= 2), sides = here.filter((q) => q.w < 1);
+      expect(front.length, `a front rail on the slab at ${s.x.toFixed(1)},${s.y.toFixed(1)},${s.z.toFixed(1)}`).toBeGreaterThanOrEqual(1);
+      expect(sides.length, `two end rails on the slab at ${s.x.toFixed(1)},${s.y.toFixed(1)},${s.z.toFixed(1)}`).toBeGreaterThanOrEqual(2);
+      checked += 1;
+    }
+    expect(checked).toBeGreaterThan(60);
   });
 
   it('crusts the facades and the roofs with the kit of a lived-in city', () => {

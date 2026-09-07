@@ -25,6 +25,9 @@
  *  tanks and stacks, skybridges, footbridges, market stalls. */
 import { CatmullRomCurve3, Vector3 } from 'three';
 import { mulberry32 } from '../lib/rng';
+import { FAMILIES, FLOOR as SKIN_FLOOR, PX as SKIN_PX, SHOP as SKIN_SHOP } from './city-skins';
+/** A floor's pitch in units (the atlas' FLOOR texels at PX a unit). */
+const FLOOR_U = SKIN_FLOOR / SKIN_PX;
 
 export const LOT = 24;
 export const STREET = 14;
@@ -69,6 +72,11 @@ export type Arch =
   | 'oldtown' | 'landmark' | 'sprawl' | 'bits' | 'street' | 'bridge' | 'temple' | 'industry' | 'mega' | 'shanty'
   | 'annex' | 'over';
 export interface Solid extends Box { kind: Kind; tex: number; arch: Arch }
+/** The archetypes whose ground floor never carries a shopfront strip. */
+export const NO_SHOP = new Set<Arch>(['bits', 'street', 'bridge', 'temple', 'industry', 'shanty', 'sprawl', 'over', 'annex']);
+/** Whether a body wears the atlas' SHOPFRONT STRIP on its ground floor (the renderer paints it; the kit keeps off it):
+ *  a facade standing on the ground, over five tall, six wide each way, of an archetype that has shops. */
+export const hasShop = (s: Solid): boolean => s.kind === 'facade' && s.y - s.h / 2 < 0.6 && s.h > 5 && Math.min(s.w, s.d) >= 6 && !NO_SHOP.has(s.arch);
 export interface Strip extends Box { color: string }
 export type SignKind = 'hang' | 'wall' | 'board' | 'tag' | 'roof' | 'gantry' | 'screen';
 export interface Sign {
@@ -666,6 +674,7 @@ export function planCity(seed: number): Plan {
       for (let y = 3.8; y < h - 1.5; y += 3.6) {
         solid(bucket, 'dark', 'bits', 0, f.x, y, f.z, s < 2 ? len : 0.9, 0.22, s < 2 ? 0.9 : len);
         clutter.push({ kind: 'rail', x: fr.x, y: y + 0.55, z: fr.z, w: len, h: 0.85, d: 0.05, rotY: fr.rot });
+        for (const e of [-1, 1]) clutter.push({ kind: 'rail', x: f.x + (s < 2 ? e * (len / 2 - 0.03) : 0), y: y + 0.55, z: f.z + (s >= 2 ? e * (len / 2 - 0.03) : 0), w: 0.86, h: 0.85, d: 0.05, rotY: fr.rot + Math.PI / 2 }); // (owner: rails round every balcony) the rails at the slab's ends
         if (bucket === core && rand() < 0.28) { // someone on the balcony (owner: NPCs doing things on the balconies), facing out
           const u = (rand() - 0.5) * (len - 1.6);
           perches.push({ x: f.x + (s < 2 ? u : 0), y: y + 0.11, z: f.z + (s >= 2 ? u : 0), yaw: [0, Math.PI, Math.PI / 2, -Math.PI / 2][s] });
@@ -757,28 +766,50 @@ export function planCity(seed: number): Plan {
     }
     return t;
   };
+  /** The body a footprint was finished as: the last facade solid of the bucket on that footprint (its skin and its
+   *  shop strip decide where the windows are). */
+  const bodyOf = (fp: NonNullable<Foot>): Solid | null => {
+    for (let i = bucket.length - 1; i >= 0 && i >= bucket.length - 60; i--) {
+      const s = bucket[i];
+      if (s.kind === 'facade' && Math.abs(s.x - fp.x) < 0.01 && Math.abs(s.z - fp.z) < 0.01 && Math.abs(s.w - fp.w) < 0.01 && Math.abs(s.d - fp.d) < 0.01) return s;
+    }
+    return null;
+  };
+  /** THE SPANDREL (owner: no condenser on a window): the blank band of a body's wall between two floors — from a
+   *  window's top to the next floor's sill — in the atlas' rhythm: the wall's base (the shop strip's four units when
+   *  the body wears one), the band's middle and height up from a floor's bottom, and the first floor the kit may take. */
+  const spandrelOf = (s: Solid): { base: number; mid: number; h: number; first: number } | null => {
+    const fam = FAMILIES.find((f) => f.win === styles[s.tex].win);
+    if (!fam) return null;
+    const lo = (fam.wy + fam.wh) / SKIN_PX, hi = FLOOR_U + fam.wy / SKIN_PX; // the window's top; the next sill
+    const shop = hasShop(s);
+    return { base: shop ? SKIN_SHOP / SKIN_PX : 0, mid: (lo + hi) / 2, h: Math.min(0.55, hi - lo - 0.14), first: shop ? 0 : 1 };
+  };
   /** THE FACADE KIT (owner: a lived-in city): on every street face, by the district's thickness — AC units in
-   *  rows under the windows, a pipe run or two, a duct, a dish, a fire escape (its platforms solid), cables
+   *  rows on the spandrels, a pipe run or two, a duct, a dish, a fire escape (its platforms solid), cables
    *  along the second floor, and at the kerb, where the gutter is wide enough that the pavement's walkers pass
    *  clear, a vending machine, a phone booth, a bin, a crate. */
   const facadeKit = (fp: NonNullable<Foot>, h: number) => {
     if (bctx.round) return;
     const K = bctx.prof.kit * (bucket === core ? 1 : 0.4);
     const floors = Math.floor((h - 3) / 3);
+    const body = bodyOf(fp);
+    const band = body ? spandrelOf(body) : null;
+    const acFloors = band ? Math.floor((h - band.base - 0.6) / 3) : 0; // the floors whose spandrel lies below the roofline
     for (let s = 0; s < 4; s++) {
       if (!bctx.outer[s] && (bctx.g < 0.3 || rand() < 0.6)) continue; // nothing fits in a seam; the alley faces take a little
       const along = s < 2 ? fp.w : fp.d;
       const f = face(fp, s, 0), rot = f.rot;
       const nx = Math.sin(rot), nz = Math.cos(rot); // the wall's outward normal
       const at = (u: number, y: number, out: number) => ({ x: f.x + (s < 2 ? u : 0) + nx * out, y, z: f.z + (s >= 2 ? u : 0) + nz * out });
-      if (rand() < 0.85 * K && floors > 1) { // condensers under the windows, floor after floor
+      if (band && rand() < 0.85 * K && acFloors > 1) { // condensers on the SPANDRELS (owner: never on a window), floor after floor
         const n = Math.max(1, Math.floor(along / 1.7));
         const rowOdds = 0.45 + 0.4 * rand(); // some walls are covered, some sparse
-        for (let k = 1; k < floors; k += rand() < 0.75 ? 1 : 2) {
+        for (let k = band.first; k < acFloors; k += rand() < 0.75 ? 1 : 2) {
           for (let i = 0; i < n; i++) {
             if (rand() >= rowOdds * K) continue;
-            const p = at(-along / 2 + (i + 0.5) * (along / n) + (rand() - 0.5) * 0.4, 3 * k + 1.7, 0.28);
-            clutter.push({ kind: 'ac', x: p.x, y: p.y, z: p.z, w: 0.62, h: 0.55, d: 0.5, rotY: rot });
+            const p = at(-along / 2 + (i + 0.5) * (along / n) + (rand() - 0.5) * 0.4, band.base + 3 * k + band.mid, 0.28);
+            clutter.push({ kind: 'ac', x: p.x, y: p.y, z: p.z, w: 0.62, h: band.h, d: 0.5, rotY: rot });
           }
         }
       }
@@ -793,6 +824,7 @@ export function planCity(seed: number): Plan {
           solid(bucket, 'dark', 'bits', 0, p.x, y, p.z, s < 2 ? len : 0.9, 0.12, s < 2 ? 0.9 : len); // the platform
           const rp = at(u, y + 0.5, 0.95);
           clutter.push({ kind: 'rail', x: rp.x, y: rp.y, z: rp.z, w: len, h: 0.9, d: 0.05, rotY: rot });
+          for (const e of [-1, 1]) { const ep = at(u + e * (len / 2 - 0.03), y + 0.5, 0.5); clutter.push({ kind: 'rail', x: ep.x, y: ep.y, z: ep.z, w: 0.86, h: 0.9, d: 0.05, rotY: rot + Math.PI / 2 }); } // the platform's end rails
           const lp = at(u + 1.2, y + 1.5, 0.7);
           clutter.push({ kind: 'escape', x: lp.x, y: lp.y, z: lp.z, w: 0.5, h: 2.9, d: 0.1, rotY: rot }); // the ladder
         }
@@ -2599,13 +2631,13 @@ export function planCity(seed: number): Plan {
   // cell eight wide beside a street holds the towers along it: it would have carried every lane over the roofs.)
   const canyonRun = (alongX: boolean, at: number, lat: number, y0: number, dir: 1 | -1): [number, number, number][] => {
     const pts: [number, number, number][] = [];
-    const bandClear = (x: number, y: number, z: number) => { for (let k = 0; k <= 12; k += 3) if (grid.hit(x, y + k, z, 2.0)) return false; return true; };
+    const bandClear = (x: number, y: number, z: number) => { for (let k = 0; k <= 12; k += 3) if (grid.hit(x, y + k, z, 2.9)) return false; return true; }; // (2.9: the corridor test probes at 1.9 every 0.8 along the lane; a sample every 1.9 at 2.9 covers every point it can probe)
     for (let t = -REACH; t <= REACH + 0.5; t += 19) {
       const x = alongX ? t : at + lat, z = alongX ? at + lat : t;
       let y = y0;
       for (let tries = 0; tries < 30; tries++) {
         let clear = true;
-        for (let s2 = 0; s2 < 19 && clear; s2 += 4.75) clear = bandClear(alongX ? x + s2 : x, y, alongX ? z : z + s2); // along the stretch to the next point
+        for (let s2 = 0; s2 < 19 && clear; s2 += 1.9) clear = bandClear(alongX ? x + s2 : x, y, alongX ? z : z + s2); // along the stretch to the next point
         if (clear) break;
         y += 4;
       }
@@ -2618,7 +2650,7 @@ export function planCity(seed: number): Plan {
       for (let i = 0; i + 1 < pts.length; i++) {
         const a = pts[i], b = pts[i + 1];
         if (a[1] === b[1]) continue;
-        for (let u = 0.25; u < 1; u += 0.25) {
+        for (let u = 0.1; u < 1; u += 0.1) {
           if (bandClear(a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u)) continue;
           if (a[1] < b[1]) a[1] += 4; else b[1] += 4;
           dirty = true; break;
