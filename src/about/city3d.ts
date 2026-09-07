@@ -1037,11 +1037,21 @@ function arterialStripTextures(aniso: number): { map: CanvasTexture; glow: Canva
   };
   band(0, ARTERIAL_ROW, '#6c7082'); // the pavements' slabs
   x.fillStyle = '#5c6074'; for (let i = 0; i < L; i += S) { x.fillRect(i, 0, 1, W); } // slab joints
-  band(0, apron + 0.5, '#585c6e'); // the aprons: a darker concrete
-  x.fillStyle = '#4a4e60'; for (let i = 0; i < L; i += 6 * S) { x.fillRect(i, Math.round(mid - apron * S), 1, Math.round((apron - half - 0.5) * S)); x.fillRect(i, Math.round(mid + (half + 0.5) * S), 1, Math.round((apron - half - 0.5) * S)); } // bay lines
+  for (let j = Math.round(mid + (apron + 0.5) * S); j < W; j += S) { x.fillRect(0, j, L, 1); x.fillRect(0, W - 1 - (j - mid), L, 1); }
+  // THE APRONS (owner: "why can cars drive on pedestrian lanes" — they read as pavement): parking asphalt at road level, a
+  // painted edge line between it and the lanes (no kerb), white bay lines every three units, oil and patches
+  band(0, apron + 0.5, '#33353e');
+  x.fillStyle = '#e8eaf0';
+  for (let i = 0; i < L; i += 3 * S) { x.fillRect(i, Math.round(mid - apron * S), 2, Math.round((apron - half - 0.8) * S)); x.fillRect(i, Math.round(mid + (half + 0.8) * S), 2, Math.round((apron - half - 0.8) * S)); } // bay lines
+  for (let i = 0; i < 6; i++) { // oil stains and a patch or two
+    const u = (i * 37 + 11) % L, side = i % 2 ? 1 : -1, lat = half + 1.6 + ((i * 53) % 60) / 10;
+    x.fillStyle = i < 4 ? '#24262c' : '#3d3f4a'; x.globalAlpha = 0.9;
+    x.beginPath(); x.ellipse(u, Math.round(mid + side * lat * S), (1.1 + (i % 3) * 0.5) * S, 0.7 * S, 0, 0, Math.PI * 2); x.fill();
+  }
+  x.globalAlpha = 1;
   band(apron - 0.2, apron + 0.5, '#8e92a6'); // the pavements' kerb stones
-  band(half, half + 0.5, '#8e92a6'); // the carriageway's kerb stones
   band(0, half, '#3e4150'); // the asphalt
+  band(half - 0.1, half + 0.2, '#e8eaf0'); // the edge line between the lanes and the aprons
   band(0, 1.8, '#7a7e90'); // the median's concrete
   band(1.75, 1.95, '#e6c042'); // its yellow edges
   band(half - 0.35, half - 0.1, '#e8eaf0'); // the edge lines
@@ -1505,7 +1515,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     if (st.kind === 'ramp' && st.y === st.y1) { // a TAPER at deck level or a SLIP at grade: a wedge from the deck's edge line (or the arterial's kerb line) out to the piece's outer edge, a parapet along the outer edge alone
       const side = Math.sign(arterialLat(st.x0, st.z0)) || 1;
       const inner = st.y > 1 ? HIGHWAY.width / 2 : ARTERIAL.w / 2;
-      const y = st.y > 1 ? st.y : st.y + 0.03;
+      const y = st.y > 1 ? st.y : st.y + 0.06;
       const onInner = (x: number, z: number) => { const lat = arterialLat(x, z) - side * inner; return [x - hnxR * lat, z - hnzR * lat]; };
       const outer = (t: number) => [st.x0 + st.dx * t - st.dz * side * (RAMP_W / 2), st.z0 + st.dz * t + st.dx * side * (RAMP_W / 2)];
       const P0 = onInner(st.x0, st.z0), P1 = onInner(st.x0 + st.dx * st.len, st.z0 + st.dz * st.len), P2 = outer(st.len), P3 = outer(0);
@@ -1514,7 +1524,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
       g.setAttribute('uv', new BufferAttribute(new Float32Array([0, 0, st.len / 12, 0, st.len / 12, 1, 0, 1]), 2));
       g.setAttribute('normal', new BufferAttribute(new Float32Array([0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0]), 3));
       g.setIndex([0, 1, 2, 0, 2, 3]);
-      const m = new Mesh(g, streetMat(rampStrip, 1)); (m.material as MeshLambertMaterial).side = DoubleSide;
+      const m = new Mesh(g, streetMat(rampStrip, 1, st.y > 1 ? 0 : 7)); (m.material as MeshLambertMaterial).side = DoubleSide; // (a slip at grade sits in front of the arterial's strip: it was painted under it, and cars seemed to drive on the apron)
       m.receiveShadow = true;
       scene.add(m);
       const w = new Mesh(new BoxGeometry(st.len + 0.3, 0.9, 0.3), deckDark); // the outer parapet
@@ -2847,7 +2857,10 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
       const allRoads = n.streets.every((q) => q.kind !== 'lane');
       n.streets.forEach((st, i) => {
         const others = n.streets.filter((o) => o !== st);
-        const maxRow = others.reduce((m, o) => Math.max(m, rowOf(o)), 0), maxCar = others.reduce((m, o) => Math.max(m, carHalf(o)), 0);
+        // (owner: a zebra painted across another street's carriageway — at a six-way the boulevard crosses the grid roads at
+        // 45°, so its carriageway reaches 1.4× its half-width along each road, and theirs along it)
+        const through = (o: Street) => 1 / Math.max(0.35, Math.abs(st.dx * o.dz - st.dz * o.dx));
+        const maxRow = others.reduce((m, o) => Math.max(m, rowOf(o), carHalf(o) * through(o) + 1.2), 0), maxCar = others.reduce((m, o) => Math.max(m, carHalf(o) * through(o)), 0);
         const arms = new Set<number>();
         for (const p of n.ports) if (p.link.street === st) arms.add(p.end === 0 ? 1 : -1);
         const ext = (d: number) => (arms.has(d) ? maxRow + 1.5 : maxCar);

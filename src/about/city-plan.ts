@@ -2328,6 +2328,57 @@ export function planCity(seed: number): Plan {
         }
       }
     }
+    // THE YOKOCHO UNDER THE DECK (owner: the highway's surroundings were flat, unlit, boring): along the aprons' outer
+    // edge, under the deck's shadow, rows of stalls with string lights and lanterns, container stacks under tarps, a tyre
+    // shop, two fuel canopies, graffiti boards on the piers, neon on their caps, sodium lamps every twelve
+    for (let t = 20; t < hlenA - 20; t += 12) {
+      const x = HIGHWAY.x0 + hdx * t, z = HIGHWAY.z0 + hdz * t;
+      if (Math.abs(x) > REACH - 24 || onStreet(x - 9) || onStreet(x) || onStreet(x + 9) || Math.abs(x) < MEDIAN + 16) continue; // (the kit reaches nine either way: clear of every north–south street's band)
+      for (const side of [-1, 1] as const) {
+        const lat = side * (ARTERIAL_ROW - ARTERIAL.walk - 0.9); // the apron's outer edge, inside the pavement's kerb
+        const px = x + hnx * lat, pz = z + hnz * lat;
+        const over = rampAt(px, pz);
+        if (over !== null && over < 4) continue;
+        posts.push({ x: px + hnx * side * 0.5, z: pz + hnz * side * 0.5, h: 6 }); // a sodium lamp at the kerb
+        if (grid.hit(px, 1.2, pz, 3)) continue;
+        const b = rand();
+        if (b < 0.45) { // a row of three stalls under a string of lights
+          for (let k = -1; k <= 1; k++) {
+            const sx = px + hdx * k * 3.4, sz = pz + hdz * k * 3.4;
+            if (grid.hit(sx, 1.2, sz, 1.8)) continue;
+            stalls.push({ x: sx, z: sz, color: signColor(rand) });
+            for (const [ox, oz] of [[-1.3, -1.1], [1.3, -1.1], [-1.3, 1.1], [1.3, 1.1]]) solid(core, 'dark', 'street', 0, sx + ox, 1.2, sz + oz, 0.14, 2.4, 0.14);
+            grid.add({ x: sx, y: 2.9, z: sz, w: 3.2, h: 1.2, d: 2.6 });
+            lantern(sx, 2.3, sz);
+          }
+          for (let k = -5; k <= 5; k += 2) lantern(px + hdx * k, 3.4, pz + hdz * k); // the string over them
+        } else if (b < 0.65) { // containers, two high, a tarp over
+          for (let k = 0; k < 2; k++) {
+            const cw = 6, ch = 2.6, cd = 2.4, cx = px + hdx * (k - 0.5) * 6.4, cz = pz + hdz * (k - 0.5) * 6.4;
+            solid(core, 'dark', 'industry', 0, cx, ch / 2, cz, cw * Math.abs(hdx) + cd * Math.abs(hdz), ch, cw * Math.abs(hdz) + cd * Math.abs(hdx));
+            if (rand() < 0.6) solid(core, 'dark', 'industry', 0, cx + (rand() - 0.5), ch * 1.5 + 0.05, cz + (rand() - 0.5), cw * Math.abs(hdx) + cd * Math.abs(hdz), ch, cw * Math.abs(hdz) + cd * Math.abs(hdx));
+            tarps.push({ x: cx, y: ch * 2 + 0.2, z: cz, w: 7, h: 0.12, d: 3.2, color: pick(rand, TARP) });
+          }
+        } else if (b < 0.78) { // a tyre shop: a shanty with stacks of tyres before it
+          solid(core, 'facade', 'shanty', SHANTY_TEX[0], px, 1.5, pz, 5, 3, 3.2);
+          for (let k = -1; k <= 1; k++) { const tx = px + hdx * k * 1.6 - hnx * side * 2.6, tz = pz + hdz * k * 1.6 - hnz * side * 2.6; solid(core, 'cyl', 'industry', 0, tx, 0.7 + (k === 0 ? 0.5 : 0), tz, 1.1, 1.4 + (k === 0 ? 1 : 0), 1.1); }
+          signs.push({ x: px - hnx * side * 1.7, y: 3.6, z: pz - hnz * side * 1.7, rotY: Math.atan2(-hnx * side, -hnz * side), w: 4, h: 1, color: signColor(rand), kind: 'board' });
+          lantern(px - hnx * side * 2.2, 2.6, pz - hnz * side * 2.2);
+        } else if (b < 0.86) { // a fuel canopy: a lit slab on four posts, pumps beneath
+          const cx = px - hnx * side * 2.2, cz = pz - hnz * side * 2.2;
+          for (const [a2, b2] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) solid(core, 'dark', 'street', 0, cx + hdx * a2 * 3.6 + hnx * b2 * 2.2, 2.2, cz + hdz * a2 * 3.6 + hnz * b2 * 2.2, 0.3, 4.4, 0.3);
+          solid(core, 'dark', 'street', 0, cx, 4.6, cz, 8.4 * Math.abs(hdx) + 5.4 * Math.abs(hdz), 0.4, 8.4 * Math.abs(hdz) + 5.4 * Math.abs(hdx));
+          leds.push({ x: cx, y: 4.35, z: cz, w: 8.2 * Math.abs(hdx) + 0.14 * Math.abs(hdz), h: 0.14, d: 8.2 * Math.abs(hdz) + 0.14 * Math.abs(hdx), color: '#5df2ff' });
+          for (const k of [-1.6, 1.6]) solid(core, 'dark', 'street', 0, cx + hdx * k, 0.8, cz + hdz * k, 0.8, 1.6, 0.6);
+          for (const k of [-2.6, 0, 2.6]) lantern(cx + hdx * k, 4.1, cz + hdz * k);
+        }
+      }
+    }
+    for (const p of piers) { // graffiti boards on the piers, neon round their caps
+      if (rand() < 0.5) billboards.push({ x: p.x + hnx * 1.2, y: 3.6, z: p.z + hnz * 1.2, rotY: Math.atan2(hnx, hnz), w: 5, h: 3, art: Math.floor(rand() * 24), lit: 0 }); // a hoarding bolted to the pier's face, wider than the pier
+      if (rand() < 0.5) billboards.push({ x: p.x - hnx * 1.2, y: 3.6, z: p.z - hnz * 1.2, rotY: Math.atan2(-hnx, -hnz), w: 5, h: 3, art: Math.floor(rand() * 24), lit: 0 });
+      leds.push({ x: p.x, y: HIGHWAY.y - 2.2, z: p.z, w: 3.2, h: 0.12, d: 3.2, color: pick(rand, ['#ff4fd8', '#5df2ff', '#C8FF00']) });
+    }
   }
   tall.sort((a, b) => b.top - a.top);
   let bridged = 0, overStreets = 0; // the spans over streets close them to the flight: not too many
