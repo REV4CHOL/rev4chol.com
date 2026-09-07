@@ -49,7 +49,7 @@ its height, the lamp within its radius; a `top` on a solid just below its deck.
 
 ## As built
 
-Commit HASH, 2026-09-07. Built as designed.
+Commit e7402ca, 2026-09-07. Built as designed.
 
 - The fog of war: `beyond = smoothstep(0, 900, length(max(|xz| − 280, 0)))`, `fog = max(fog, 0.985 · beyond)` in both
   fog-chunk forms; the mixed form writes `alpha = 1 − beyond` under three's `OPAQUE` define. From the fence the copied

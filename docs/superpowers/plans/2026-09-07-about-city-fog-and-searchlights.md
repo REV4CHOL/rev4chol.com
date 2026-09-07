@@ -43,4 +43,4 @@ and the bloom. The plan's `Searchlight` gains a `mount`; the renderer builds the
 
 ## Status
 
-Built 2026-09-07 (commit in the spec's "As built").
+Built 2026-09-07 (e7402ca).
