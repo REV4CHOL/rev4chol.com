@@ -262,7 +262,8 @@ function skinAtlas(rand: () => number): SkinAtlas {
         const on = rand() < p;
         const col = on ? (floorCol ?? windowColor(rand, v.warm)) : v.glass;
         put(wx - 1, wTop - 1, fam.ww + 2, fam.wh + 2, v.frame, 1, 0.15, false); // the frame, a shade proud
-        put(wx, wTop, fam.ww, fam.wh, col, on ? (fam.win === 'wide' ? 0.5 + rand() * 0.2 : 0.75 + rand() * 0.25) : 1, curtain ? -0.1 : -1, true); // the glass, recessed (a wide pane burns lower: a slab of white bloomed)
+        const burn = on ? (fam.win === 'wide' ? 0.5 + rand() * 0.2 : 0.75 + rand() * 0.25) : 1; // (a wide pane burns lower: a slab of white bloomed)
+        put(wx, wTop, fam.ww, fam.wh, on ? lerpHex(v.wall, col, burn) : col, 1, curtain ? -0.1 : -1, true); // the glass, recessed: ONE FLAT LIGHT, painted OPAQUE (owner: a pane at three-quarter alpha let the wall's grain and joints through as TV static)
         if (!curtain) put(wx - 1, wTop + fam.wh, fam.ww + 2, 1, '#ffffff', 0.35, 0.45); // the sill, proud
         if (fam.win === 'strip') { // the piers between the strips stand proud, floor through floor
           put(ox + bx, fb, fam.wx - 1, FLOOR, v.wall, 1, 1.2, false);
@@ -285,13 +286,14 @@ function skinAtlas(rand: () => number): SkinAtlas {
       const sx = ox + s * 32;
       put(sx, sy, 2, SHOP, v.wall, 1, 0.6, false); put(sx + 30, sy, 2, SHOP, v.wall, 1, 0.6, false); // pilasters
       const shut = rand() < 0.22;
-      put(sx + 2, sy, 28, 4, shut ? '#2a2a30' : signColor(rand), 1, 0.4, !shut); // the fascia: a lit sign board
+      const fascia = shut ? '#2a2a30' : signColor(rand);
+      put(sx + 2, sy, 28, 4, fascia, 1, 0.4, !shut); // the fascia: a lit sign board
       if (shut) {
         for (let yy = sy + 4; yy < sy + SHOP - 2; yy += 2) put(sx + 2, yy, 28, 1, '#000000', 0.35, -0.2, false); // a shutter's ribs
         continue;
       }
-      put(sx + 5 + ri(6), sy + 1, 6 + ri(10), 2, '#ffffff', 0.85, 0.4, true); // its lettering, white-hot
-      put(sx + 2, sy + 4, 28, SHOP - 6, rand() < 0.7 ? '#fff1d6' : pick(rand, ['#dff6ff', '#ffe0f4', '#e6ffe0']), 0.9, -0.8, true); // the lit shop glass
+      put(sx + 5 + ri(6), sy + 1, 6 + ri(10), 2, lerpHex(fascia, '#ffffff', 0.85), 1, 0.4, true); // its lettering, white-hot (opaque)
+      put(sx + 2, sy + 4, 28, SHOP - 6, lerpHex(v.wall, rand() < 0.7 ? '#fff1d6' : pick(rand, ['#dff6ff', '#ffe0f4', '#e6ffe0']), 0.9), 1, -0.8, true); // the lit shop glass (opaque)
       put(sx + (rand() < 0.5 ? 3 : 22), sy + 5, 5, SHOP - 7, '#3a2a20', 1, -0.6, false); // the door
       put(sx + 2, sy + 4, 28, 1, v.frame, 1, 0, false); // the frame's head
       for (let m = sx + 9; m < sx + 28; m += 7) put(m, sy + 4, 1, SHOP - 6, v.frame, 1, 0, false); // mullions
@@ -415,8 +417,8 @@ function skinMaterial(atlas: SkinAtlas, cyl: boolean, far: boolean): MeshStandar
         vec3 skinCol = mix( uGlass, sampledDiffuseColor.rgb * 0.3, uLit ) * litF + uGlass * glassF + wallCol * wall; // a lit pane is glass by day
         sampledDiffuseColor.rgb = mix( skinCol, vec3( 0.2, 0.12, 0.06 ), crown );
         diffuseColor *= sampledDiffuseColor;`)
-      .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = mix( 0.9, 0.16, wmask );')
-      .replace('#include <metalnessmap_fragment>', 'float metalnessFactor = 0.6 * glassF;')
+      .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = mix( 0.9, 0.42, wmask );') // (0.16 mirrored the dome: the panes flashed as the eye moved)
+      .replace('#include <metalnessmap_fragment>', 'float metalnessFactor = 0.45 * glassF;')
       .replace('#include <normal_fragment_maps>', `
         mat3 skinTbn = getTangentFrame( - vViewPosition, normal, vTile ); // a frame from the tile's texels: isotropic, whatever the wall's proportions
         vec3 mapN = skinN.xyz * 2.0 - 1.0;
@@ -1209,6 +1211,8 @@ export interface CityRide {
   };
   /** The cast's sprite sheet, for inspection. */
   sheet(): HTMLCanvasElement;
+  /** The facade atlas as painted (the panes must be flat: no grain through a light). */
+  atlas(): HTMLCanvasElement;
 }
 
 export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
@@ -3097,17 +3101,18 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
       .replace('#include <common>', `#include <common>
         attribute vec3 aPos; attribute float aFrame; attribute float aYaw; attribute float aRow; attribute float aScale;
         attribute vec3 aTop; attribute vec3 aBot; attribute vec3 aHair; attribute vec3 aSkin; attribute vec3 aGlow;
-        varying vec3 vTop; varying vec3 vBot; varying vec3 vHair; varying vec3 vSkin; varying vec3 vGlow;`)
+        varying vec3 vTop; varying vec3 vBot; varying vec3 vHair; varying vec3 vSkin; varying vec3 vGlow; varying vec2 vLocal;`)
       .replace('#include <uv_vertex>', `
         vec3 bbRight = vec3( viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0] );
         float bbFlip = dot( bbRight, vec3( sin( aYaw ), 0.0, cos( aYaw ) ) ) < 0.0 ? 1.0 : 0.0;
         vMapUv = vec2( ( mix( uv.x, 1.0 - uv.x, bbFlip ) + aFrame ) / 11.0, 1.0 - ( aRow + 1.0 - uv.y ) / ${ROWS}.0 );
+        vLocal = uv;
         vTop = aTop; vBot = aBot; vHair = aHair; vSkin = aSkin; vGlow = aGlow;`)
       .replace('#include <begin_vertex>', `
         vec3 transformed = aPos + bbRight * position.x * 0.78 * aScale + vec3( 0.0, ( position.y + 0.5 ) * 1.55 * aScale, 0.0 );`);
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
-        varying vec3 vTop; varying vec3 vBot; varying vec3 vHair; varying vec3 vSkin; varying vec3 vGlow;`)
+        varying vec3 vTop; varying vec3 vBot; varying vec3 vHair; varying vec3 vSkin; varying vec3 vGlow; varying vec2 vLocal;`)
       .replace('#include <map_fragment>', `
         vec4 pTex = texture2D( map, vMapUv );
         vec3 pt = pTex.rgb;
@@ -3120,7 +3125,14 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
         pc = mix( pc, vTop, mTop ); pc = mix( pc, vBot, mBot ); pc = mix( pc, vHair, mHair ); pc = mix( pc, vSkin, mSkin );
         pc *= diffuse;
         pc = mix( pc, vGlow, mGlow );
-        diffuseColor = vec4( pc, pTex.a );`);
+        // FAR OFF (owner: the walkers vanished and flickered at a distance — an eight-texel figure sampled nearest at a
+        // pixel a texel or more lands on whichever texel, often a clear one): where a pixel spans more than a texel the
+        // figure is a flat capsule in its own two colours at full alpha — a steady dot of the right colour at any range
+        float texelPx = fwidth( vMapUv.y ) * ${ROWS * 16}.0;
+        float lod = smoothstep( 0.9, 1.8, texelPx );
+        vec3 farCol = mix( vTop, vBot, 0.5 ) * diffuse;
+        float farA = step( abs( vLocal.x - 0.5 ), 0.24 ) * step( abs( vLocal.y - 0.5 ), 0.46 );
+        diffuseColor = mix( vec4( pc, pTex.a ), vec4( farCol, farA ), lod );`);
   };
   peopleMat.customProgramCacheKey = () => 'people';
   const peopleMesh = new Mesh(peopleGeo, peopleMat);
@@ -4013,5 +4025,6 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
       trains: trains.map((t) => { const u = ((t.s % railLen) + railLen) % railLen / railLen; const q = railCurve.getPointAt(u); return [q.x, q.y, q.z, t.dwell]; }),
     }),
     sheet: () => peopleMat.map!.image as HTMLCanvasElement,
+    atlas: () => atlas.map.image as HTMLCanvasElement,
   };
 }
