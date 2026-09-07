@@ -127,3 +127,21 @@ tsc clean, vitest green, vite build; on the pane at the desktop path (150 runner
 under a one-pixel shift ≤ 0.06 % in the three views), the canal's end from the fence (water gone past the last
 bridge, blocks beyond), the highway seen east and west from the fence (deck running into the fog), a tile view (no
 water, no boulevard, no deck; blocks where they were; vehicles with bodies), render time at the high tier.
+
+## As built (f1d4fed, 44f2649)
+
+- **The windows — the real cause, measured.** The footprint fade alone moved nothing in the skyline and wide views.
+  Disabling the whole mask did (large frame-to-frame changes under a one-pixel shift: 0.18 / 0.43 / 0.14 % → 0.04 /
+  0.06 / 0.02 %), and a close facade showed no visible speckle, so the noise was fine-grained: the sine hash
+  `fract(sin(dot(cell + vInst·37, …))·43758)` fed by an *interpolated* per-instance varying — an ulp of difference
+  across a wall is a different window state per fragment, invisible up close, a crawl at a distance, and worse on other
+  GPUs (the owner's speckled panes). Fixed at the root: `vInst` and `vSkin` are `flat` varyings (one exact value a
+  building) and the hash is an integer hash of the cell and the building's integer. Result under the same one-pixel
+  shift: 0.06 / 0.05 / 0.01 %, the mask-off floor. The footprint fade stays, widened: from a cell sixteen pixels
+  across to one of four (`smoothstep(0.06, 0.25, cells a pixel)`), because the atlas is mip-blurred well before a cell
+  is a pixel and the mask must not re-cut it.
+- **The far fleet:** 26,753 bodies in the first ring in one instanced mesh, 164,346 lights over both rings; the highway
+  continuation's lanes are in the first ring's set. Render at the ultra tier 2.1–4.8 ms by view.
+- **The filler** counts several hundred boxes; the gates' blocks at ±4 on the tree avenue carry the copied gate
+  building instead (their bridge spans the median) — the test excepts them.
+- **The canal:** fourteen east–west bridges inside the rim (was twenty), the arterial's skew bridge as before.
