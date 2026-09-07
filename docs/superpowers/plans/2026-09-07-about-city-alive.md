@@ -17,23 +17,23 @@
 ---
 
 ### Task A: Bugs — commit `fix(about): no motion streak, no texture jitter, a phone that keeps moving`
-- [ ] Remove `MotionBlurPass` from the composer and the file; the lens target without a depth texture.
-- [ ] Linear magnification on facades, normals and strips; anisotropy 8/16; `PCFSoftShadowMap`; `rvlRide.shimmer()`.
-- [ ] Mobile: half pixels, trimmed counts, adaptive sim rate from `rvlRide.timings()`, calm slows instead of stops, tour keeps rendering, context loss restored.
-- [ ] Deploy.
+- [x] Remove `MotionBlurPass` from the composer and the file; the lens target without a depth texture.
+- [x] Linear magnification on facades, normals and strips; anisotropy 8/16; `PCFSoftShadowMap`; `rvlRide.shimmer()`.
+- [x] Mobile: half pixels, trimmed counts, adaptive sim rate from `rvlRide.timings()`, calm slows instead of stops, tour keeps rendering, context loss restored.
+- [x] Deploy.
 
 ### Task B: The highway's surroundings and the intersections — commit `feat(about): the viaduct's yokocho, honest aprons and zebras`
-- [ ] Apron texture; slips above the aprons; under-deck kit; lamps.
-- [ ] Zebra reach through angled streets.
+- [x] Apron texture; slips above the aprons; under-deck kit; lamps.
+- [x] Zebra reach through angled streets.
 
 ### Task C: The boulevard cut — commit `feat(about): the citadel on the boulevard`
-- [ ] Two diagonal halves; the citadel; neon kerbs, gantries, screens.
+- [x] Two diagonal halves; the citadel; neon kerbs, gantries, screens.
 
 ### Task D: Crowds and traffic — commit `feat(about): a crowded city`
-- [ ] Counts up, weights up, sim cost checked.
+- [x] Counts up, weights up, sim cost checked.
 
 ### Task E: Flying traffic — commit `feat(about): traffic between the buildings`
-- [ ] Canyon lanes with height profiles, ring and arcs, six kinds.
+- [x] Canyon lanes with height profiles, ring and arcs, six kinds.
 
 ### Task F: Fireworks — commit `feat(about): fireworks over the city`
 
@@ -42,6 +42,16 @@
 ### Task H: The precinct — commit `feat(about): the stadium and wheel precinct`
 
 ### Task I: Parkour — commit `feat(about): parkour on the roofs`
-- [ ] `city-runners.ts` sim + tests; sprite frames; trails; renderer.
+- [x] `city-runners.ts` sim + tests; sprite frames; trails; renderer.
 
 ### Task J: Docs, memory, deploy.
+
+## Status (2026-09-07)
+
+- [x] Task A — cc6f833 `fix(about): no motion streak, no texture jitter, a phone that keeps moving` (deployed).
+- [x] Task B — 73a5ff5 `feat(about): the viaduct's yokocho, honest aprons and zebras` (deployed).
+- [x] Task C — built as 2303f43 `feat(about): the gates on the avenue`: the flat stretch the owner named is the E–W avenue, so it got two gate complexes instead of a cut diagonal and a citadel (see the spec's as-built).
+- [x] Task D — b4dac5f `feat(about): a crowded city` (vehicles 2000, not 2100: the flow gate).
+- [x] Tasks E, F, G, H — d2e8ede `feat(about): flying traffic between the buildings, fireworks over the city, the cat, the precinct` (one commit: the four share the plan's air, sites, cat and precinct code paths).
+- [x] Task I — bb756b1 `feat(about): parkour on the roofs`.
+- [x] Task J — this commit: the spec's as-built section, this status, the memory entry; deploy verified.
