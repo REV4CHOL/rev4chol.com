@@ -66,7 +66,7 @@ Commit d6c86f0, 2026-09-07. Built as designed, with two findings on the way:
 Numbers: 8,645 masses a tile; 69,160 instances in ring 1 (every tier, a phone builds this ring only), 207,480 with
 ring 2 (from the high tier); 4.4 ms of render at the high tier on the owner's PC with both rings.
 
-## Follow-up: the seams (2026-09-08, HASH)
+## Follow-up: the seams (2026-09-08, 0a3a7cf)
 
 Owner, with a shot down the avenue past the fence: "we can't just leave these roads empty outside the boundaries like
 this. Animate them too like our city within the boundaries. I want our borders to look seamless." The tiles carried
