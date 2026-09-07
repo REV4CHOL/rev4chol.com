@@ -47,7 +47,7 @@ export class Music {
   constructor(
     private deck: Deck, private local: Store, private session: Store,
     private now: () => number = () => Date.now(),
-    private timers: { set: (fn: () => void, ms: number) => ReturnType<typeof setInterval>; clear: (h: ReturnType<typeof setInterval>) => void } = { set: setInterval, clear: clearInterval },
+    private timers: { set: (fn: () => void, ms: number) => ReturnType<typeof setInterval>; clear: (h: ReturnType<typeof setInterval>) => void } = { set: (fn, ms) => setInterval(fn, ms), clear: (h) => clearInterval(h) }, // (wrapped: a bare window function called as a method is an "illegal invocation")
   ) {
     try { this.enabled = local.getItem(CHOICE) !== 'off'; } catch { /* private mode */ }
   }
