@@ -382,7 +382,7 @@ export class Traffic {
     if (!entry) return;
     const lanes = entry.lanes[lane.dir > 0 ? 0 : 1];
     const to = lanes[Math.min(lane.index, lanes.length - 1)];
-    if (!to || to === lane) return;
+    if (!to) return; // (a single link — the highway with no ramp cutting it — portals a lane to its own start)
     lanePoint(lane, lane.len, P); lanePoint(to, 0, Q);
     lane.exits.push({ to, weight: 1, crossing: false, straight: true, portal: true, x0: P.x, y0: P.y, z0: P.z, cx: P.x, cz: P.z, x1: Q.x, y1: Q.y, z1: Q.z, S: 0 });
   }

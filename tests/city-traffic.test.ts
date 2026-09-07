@@ -20,33 +20,21 @@ describe('Traffic', () => {
     const widest = Math.max(...Object.values(SPEC).map((v) => v[1]));
     for (const off of OFFSETS.highway) expect(off + widest / 2).toBeLessThanOrEqual(DECK_KERB - 0.1);
     const hw = traffic.lanes.filter((l) => l.link.street.kind === 'highway');
-    expect(hw.length).toBeGreaterThan(20);
+    expect(hw.length).toBe(6); // one link end to end (no ramp cuts it now), three lanes each way
     for (const lane of hw) expect(Math.abs(lane.offset) + widest / 2).toBeLessThanOrEqual(DECK_KERB - 0.1);
   });
 
-  it('cuts the carriageways into a graph: crossings, ramp merges, lit intersections, no dangling lane', () => {
+  it('cuts the carriageways into a graph: crossings, lit intersections, no dangling lane, no ramp', () => {
     expect(traffic.nodes.length).toBeGreaterThan(400);
     expect(traffic.links.length).toBeGreaterThan(800);
     const kinds = new Set(traffic.links.map((l) => l.street.kind));
-    for (const k of ['road', 'highway', 'diagonal', 'ramp', 'arterial']) expect(kinds.has(k as never), k).toBe(true);
+    for (const k of ['road', 'highway', 'diagonal', 'arterial']) expect(kinds.has(k as never), k).toBe(true);
+    expect(kinds.has('ramp' as never)).toBe(false); // (owner: the ramps are cut — the highway runs end to end past the fog)
     expect(traffic.nodes.filter((n) => n.signal).length).toBeGreaterThan(200);
     for (const lane of traffic.lanes) expect(lane.exits.length, `lane on ${lane.link.street.kind}`).toBeGreaterThan(0);
-    // every ramp piece is joined at both ends; each chain hangs off the highway at one end and lands on the arterial at the other
-    const rampLinks = traffic.links.filter((l) => l.street.kind === 'ramp');
-    expect(rampLinks.length).toBe(12);
-    let mounts = 0, merges = 0;
-    for (const l of rampLinks) {
-      for (const n of [l.a, l.b]) {
-        expect(n.ports.length, 'a ramp piece joined at both ends').toBeGreaterThanOrEqual(2);
-        if (n.streets.some((s) => s.kind === 'highway')) { mounts += 1; expect(n.ports.length).toBe(3); }
-        if (n.streets.some((s) => s.kind === 'arterial')) { merges += 1; expect(n.ports.length).toBe(3); expect(n.signal).toBeNull(); }
-      }
-    }
-    expect(mounts).toBe(4); expect(merges).toBe(4);
-    // the arterial: lit crossings with the north–south roads, priority T's where a stub ends on it, lanes both ways
+    // the arterial: lit crossings with the north–south roads, lanes both ways
     const arterialNodes = traffic.nodes.filter((n) => n.streets.some((s) => s.kind === 'arterial') && n.streets.some((s) => s.kind === 'road'));
-    expect(arterialNodes.filter((n) => n.signal && n.ports.length >= 4).length).toBeGreaterThanOrEqual(10);
-    expect(arterialNodes.filter((n) => !n.signal && n.ports.length === 3).length).toBeGreaterThanOrEqual(4);
+    expect(arterialNodes.filter((n) => n.signal && n.ports.length >= 4).length).toBeGreaterThanOrEqual(12);
     expect(traffic.lanes.filter((l) => l.link.street.kind === 'arterial').length).toBeGreaterThan(60);
     // per-street boxes: at an arterial crossing the road's lanes stop before the arterial's pavement, the arterial's before the road's kerb
     for (const n of arterialNodes.filter((n) => n.signal).slice(0, 8)) {
@@ -153,13 +141,14 @@ describe('Traffic', () => {
     expect(warped).toBeGreaterThan(5);
   });
 
-  it('uses the ramps: traffic leaves the highway and joins it', () => {
-    let onRamps = 0;
+  it('runs the highway as a through-route: its traffic stays on it end to end, never on a ramp', () => {
+    let onHighway = 0, onRamps = 0;
     for (let f = 0; f < 600; f++) {
       traffic.step();
-      if (f % 20 === 0) onRamps += traffic.cars.filter((c) => c.lane?.link.street.kind === 'ramp').length;
+      if (f % 20 === 0) { onHighway += traffic.cars.filter((c) => c.lane?.link.street.kind === 'highway').length; onRamps += traffic.cars.filter((c) => c.lane?.link.street.kind === 'ramp').length; }
     }
-    expect(onRamps).toBeGreaterThan(20);
+    expect(onHighway).toBeGreaterThan(600); // (thirty samples of a deck that carries some forty vehicles)
+    expect(onRamps).toBe(0);
   });
 
   it('runs a pedestrian phase: WALK only while the street is red with time to cross, FLASH for the crossing time before its green, DONT through its phase', () => {

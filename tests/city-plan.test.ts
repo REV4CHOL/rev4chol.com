@@ -68,7 +68,8 @@ describe('planCity', () => {
 
   it('is Newport City: alleys, wires, closed segments, a canal, a highway, a diagonal, features', () => {
     const kinds = new Set(plan.streets.map((s) => s.kind));
-    for (const k of ['road', 'highway', 'canal', 'alley', 'diagonal', 'arterial', 'ramp']) expect(kinds.has(k as never), k).toBe(true);
+    for (const k of ['road', 'highway', 'canal', 'alley', 'diagonal', 'arterial']) expect(kinds.has(k as never), k).toBe(true);
+    expect(kinds.has('ramp' as never)).toBe(false); // (owner: the ramps are cut)
     expect(plan.streets.filter((s) => s.kind === 'alley').length).toBeGreaterThan(120);
     expect(plan.streets.filter((s) => s.kind === 'road').length).toBeGreaterThan(44); // closed segments split the runs
     expect(plan.wires.length).toBeGreaterThan(1200);
@@ -313,7 +314,7 @@ describe('Newport City, layered (owner: messy, overlapping, Ghost in the Shell)'
     }
     expect(r.stations.length).toBe(3);
     expect(plan.streets.filter((s) => s.kind === 'catwalk' && Math.abs(s.y - RAIL.y - 0.6) < 0.01).length).toBe(6); // the platforms
-    expect(r.portals.length).toBeGreaterThanOrEqual(30); // (never in a crossing street, never under the arterial's deck)
+    expect(r.portals.length).toBeGreaterThanOrEqual(28); // (never in a crossing street, never under the arterial's deck; the undercroft moved the kit under the line by one)
     for (const p of r.portals) expect(Math.min(Math.abs(Math.abs(p.x) - RAIL.at), Math.abs(Math.abs(p.z) - RAIL.at))).toBeLessThan(0.01); // on a ring street's line
     expect(plan.roomAhead('x', RAIL.at, 0, 1)).toBe(0);
     expect(plan.roomAhead('z', -RAIL.at, 0, -1)).toBe(0);
@@ -354,7 +355,46 @@ describe('The viaduct over its arterial (owner: roads that exist in real life)',
     }
   });
 
-  it('builds four ramps as chains of three pieces that meet end to end, from the deck\'s edge lane to the arterial\'s kerb lane', () => {
+  it('cuts the ramps (owner): no ramp, no street severed or stubbed for one — every north–south line the slips once met crosses the arterial at grade', () => {
+    expect(ramps.length).toBe(0);
+    for (const X of [-133, -57, 57, 133]) {
+      const zA = arterialZ(X);
+      expect(ns.some((s) => Math.abs(s.x0 - X) < 0.5 && s.z0 < zA && s.z0 + s.len > zA), `x=${X} runs through the arterial`).toBe(true);
+    }
+  });
+
+  it('builds THE UNDERCROFT (owner: dense building under the highway): infill units on both aprons, turned with the deck, the road and the pavement clear; a ceiling of kit above the traffic', () => {
+    const units = plan.core.filter((s) => s.arch === 'undercroft');
+    expect(units.length).toBeGreaterThan(50);
+    let north = 0, south = 0;
+    for (const u of units) {
+      const lat = arterialLat(u.x, u.z);
+      expect(Math.abs(Math.abs(lat) - (ARTERIAL.w / 2 + 1.3 + 3)), `a unit at ${u.x.toFixed(0)},${u.z.toFixed(0)} off its line`).toBeLessThan(0.05);
+      expect(Math.abs((u.rotY ?? 0) - Math.atan2(0.1625, 0.98676))).toBeLessThan(0.02); // turned with the axis
+      expect(u.h).toBeGreaterThanOrEqual(7); expect(u.h).toBeLessThanOrEqual(10.5); // under the deck's edge
+      if (lat > 0) north += 1; else south += 1;
+      for (let i = -12; i <= 12; i++) expect(Math.abs(u.x - streetAt(i)), `a unit in the band of the street at x=${streetAt(i)}`).toBeGreaterThan(STREET / 2 + 0.4 + u.w / 2); // past the crossing street's kerb
+    }
+    expect(north).toBeGreaterThan(20); expect(south).toBeGreaterThan(20);
+    const hanging = plan.clutter.filter((c) => (c.kind === 'pipe' || c.kind === 'duct' || c.kind === 'beam') && c.y > 9 && c.y < 10.2 && Math.abs(arterialLat(c.x, c.z)) < 6);
+    expect(hanging.length).toBeGreaterThan(20);
+    for (const c of hanging) expect(c.y - c.h / 2).toBeGreaterThan(7); // over a bus
+    const mezz = plan.core.filter((s) => s.kind === 'dark' && s.arch === 'street' && s.h === 2.6 && Math.abs(s.y - 8.6) < 0.01 && Math.abs(arterialLat(s.x, s.z)) < 6);
+    expect(mezz.length).toBeGreaterThan(3);
+    for (const m of mezz) expect(m.y - m.h / 2).toBeGreaterThanOrEqual(7.2);
+  });
+
+  it('keeps the highway\'s carriageway clear end to end (owner: "rails clipping on the main highways"): nothing solid at deck height across its lanes', () => {
+    const hw = plan.streets.find((s) => s.kind === 'highway')!;
+    for (let t = 2; t < hw.len; t += 4) {
+      for (const off of [-6.5, -3.5, 0, 3.5, 6.5]) {
+        const x = hw.x0 + hw.dx * t - hw.dz * off, z = hw.z0 + hw.dz * t + hw.dx * off;
+        expect(plan.grid.hit(x, hw.y + 2, z, 0.3), `the deck at ${x.toFixed(0)},${z.toFixed(0)}`).toBeNull();
+      }
+    }
+  });
+
+  it.skip('built four ramps as chains of three pieces (cut: owner) — kept for a plan with ramps', () => {
     expect(ramps.length).toBe(12);
     for (const r of ramps) expect(r.width).toBe(RAMP_W);
     const starts = new Set(ramps.map((r) => r));
@@ -377,7 +417,7 @@ describe('The viaduct over its arterial (owner: roads that exist in real life)',
     for (const r of ramps) expect(r.oneWay).toBe(true);
   });
 
-  it('grades the runs like a real ramp and keeps the tapers and slips flat', () => {
+  it.skip('graded the runs like a real ramp and kept the tapers and slips flat (cut: owner)', () => {
     let runs = 0;
     for (const r of ramps) {
       if (r.y === r.y1) continue;
@@ -392,7 +432,7 @@ describe('The viaduct over its arterial (owner: roads that exist in real life)',
     expect(runs).toBe(4);
   });
 
-  it('never passes a ramp lower than a bus over an open street, and closes the stubs it does', () => {
+  it.skip('never passed a ramp lower than a bus over an open street, and closed the stubs it did (cut: owner)', () => {
     for (const s of ns) {
       for (const r of ramps) {
         const x1 = r.x0 + r.dx * r.len;
@@ -491,7 +531,7 @@ describe('The viaduct over its arterial (owner: roads that exist in real life)',
 
   it('dresses the aprons: parked vehicles, stalls and shanties, none on the carriageway', () => {
     const aprons = plan.parked.filter((p) => Math.abs(arterialLat(p.x, p.z)) < ARTERIAL_ROW + 1);
-    expect(aprons.length).toBeGreaterThan(10);
+    expect(aprons.length).toBeGreaterThan(4); // (the undercroft's units took most of the aprons: the parked stand in its yards)
     for (const p of aprons) {
       const lat = Math.abs(arterialLat(p.x, p.z));
       expect(lat).toBeGreaterThan(ARTERIAL.w / 2 + 2.2);

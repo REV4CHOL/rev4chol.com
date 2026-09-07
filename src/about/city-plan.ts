@@ -75,10 +75,10 @@ export type Kind = 'facade' | 'dark' | 'cyl' | 'pyr' | 'spire' | 'dome' | 'tree'
 export type Arch =
   | 'tower' | 'slab' | 'cyl' | 'ziggurat' | 'twin' | 'cross' | 'needle' | 'podium' | 'low' | 'block'
   | 'oldtown' | 'landmark' | 'sprawl' | 'bits' | 'street' | 'bridge' | 'temple' | 'industry' | 'mega' | 'shanty'
-  | 'annex' | 'over' | 'citadel';
+  | 'annex' | 'over' | 'citadel' | 'undercroft';
 export interface Solid extends Box { kind: Kind; tex: number; arch: Arch; /** A turn about y (the citadel's tiers); the grid holds the turned box's bounds. */ rotY?: number }
 /** The archetypes whose ground floor never carries a shopfront strip. */
-export const NO_SHOP = new Set<Arch>(['bits', 'street', 'bridge', 'temple', 'industry', 'shanty', 'sprawl', 'over', 'annex', 'citadel']);
+export const NO_SHOP = new Set<Arch>(['bits', 'street', 'bridge', 'temple', 'industry', 'shanty', 'sprawl', 'over', 'annex', 'citadel', 'undercroft']); // (an undercroft unit is turned with the viaduct: the shop light on the pavement is axis-aligned)
 /** Whether a body wears the atlas' SHOPFRONT STRIP on its ground floor (the renderer paints it; the kit keeps off it):
  *  a facade standing on the ground, over five tall, six wide each way, of an archetype that has shops. */
 export const hasShop = (s: Solid): boolean => s.kind === 'facade' && s.y - s.h / 2 < 0.6 && s.h > 5 && Math.min(s.w, s.d) >= 6 && !NO_SHOP.has(s.arch);
@@ -1524,36 +1524,15 @@ export function planCity(seed: number): Plan {
   const openZ = (i: number, j: number) => !closedZ.has(`${i}:${j}`);
   const openX = (i: number, j: number) => !closedX.has(`${i}:${j}`);
   const onStreet = (t: number) => Math.abs(((t % G) + G) % G - G / 2) < STREET / 2 + 2.5;
-  // -- THE ARTERIAL AND ITS RAMPS (owner: roads that exist in real life) ------------------------------------------
-  // The deck rides over a surface arterial on its own axis. Four ramps, a chain of three straight pieces each: the
-  // eastbound pair on the deck's north (left-hand traffic: the eastbound lanes ride the left normal), the westbound
-  // pair on the south. Where a slip meets the arterial the north–south street there is SEVERED (it ends at the first
-  // open crossing either side; the blocks merge over its band); where a run passes lower than a bus over a
-  // north–south street, that street's STUB on the ramp's side closes and the run on the other side ends on the
-  // arterial's axis as a T; every east–west segment the arterial's pavement would eat closes. The bands of all of
-  // them get a ground patch, so the tile's paint never reads as a ghost road.
+  // -- THE ARTERIAL UNDER THE DECK (owner: roads that exist in real life; then "cut the highway ramps") -----------
+  // The deck rides over a surface arterial on its own axis. The four ramp chains that once came down to it are CUT:
+  // the highway is a through-route whose traffic runs end to end past the fog; no north–south street is severed or
+  // stubbed for a slip any more (the machinery below stays, for a plan with ramps). Every east–west segment the
+  // arterial's pavement would eat closes; the bands get a ground patch, so the tile's paint never reads as a ghost road.
   const hlenA = Math.hypot(HIGHWAY.x1 - HIGHWAY.x0, HIGHWAY.z1 - HIGHWAY.z0);
   const hdx = (HIGHWAY.x1 - HIGHWAY.x0) / hlenA, hdz = (HIGHWAY.z1 - HIGHWAY.z0) / hlenA;
   const hnx = -hdz, hnz = hdx; // the left normal: north
-  const axisPt = (x: number, lat: number) => ({ x: x + hnx * lat, z: arterialZ(x) + hnz * lat }); // `lat` off the axis at axis-x `x`
-  const deckTop = HIGHWAY.y + 0.4;
-  const piece = (a: { x: number; z: number }, ya: number, b: { x: number; z: number }, yb: number): Street => {
-    const dx = b.x - a.x, dz = b.z - a.z, len = Math.hypot(dx, dz);
-    return { x0: a.x, z0: a.z, dx: dx / len, dz: dz / len, len, y: ya, y1: yb, kind: 'ramp', width: RAMP_W, oneWay: true };
-  };
-  /** A ramp chain on `side` (+1 north), driven in `dir` (+1 eastward), leaving the deck (`off`) or joining it, its slip
-   *  meeting the arterial at axis-x `xm`: its pieces in driving order. */
-  const chain = (side: 1 | -1, dir: 1 | -1, off: boolean, xm: number): Street[] => {
-    const L = RAMP, s = off ? -dir : dir; // from the merge point back toward the deck end
-    const xs = [xm + s * (L.slip + L.run + L.taper), xm + s * (L.slip + L.run), xm + s * L.slip, xm]; // the joints' axis-x, deck end first
-    const P0 = axisPt(xs[0], side * L.mount), P1 = axisPt(xs[1], side * L.lat), P2 = axisPt(xs[2], side * L.lat), P3 = axisPt(xs[3], side * L.foot);
-    const taper = off ? piece(P0, deckTop, P1, deckTop) : piece(P1, deckTop, P0, deckTop);
-    const run = off ? piece(P1, deckTop, P2, CANAL.deck) : piece(P2, CANAL.deck, P1, deckTop);
-    const slip = off ? piece(P2, CANAL.deck, P3, CANAL.deck) : piece(P3, CANAL.deck, P2, CANAL.deck);
-    return off ? [taper, run, slip] : [slip, run, taper];
-  };
-  const mergesX = [-133, 57, 133, -57]; // where the four slips meet the arterial: EB off, EB on, WB off, WB on
-  ramps.push(...chain(1, 1, true, mergesX[0]), ...chain(1, 1, false, mergesX[1]), ...chain(-1, -1, true, mergesX[2]), ...chain(-1, -1, false, mergesX[3]));
+  const mergesX: number[] = []; // (owner: "cut the highway ramps" — no slip meets the arterial now, no chain climbs to the deck; `ramps` stays empty)
   /** The lowest ramp slab over a point, or null when none passes over it. */
   const rampAt = (x: number, z: number): number | null => {
     let best: number | null = null;
@@ -2538,6 +2517,71 @@ export function planCity(seed: number): Plan {
       entrance(ax + hnx * lat, arterialZ(ax) + hnz * lat, side > 0 ? hd : hd + Math.PI);
     }
   }
+  // THE UNDERCROFT (owner: "cut the highway ramps; fill in the under of the highways with dense building, architecture
+  // infrastructure"): the aprons either side of the arterial are BUILT UP with infill units — two- and three-storey
+  // shophouses jammed against the viaduct, turned with its axis, shopfronts to the road, a board and a hanging sign, a
+  // lantern, condensers on the spandrels, a ladder up the back, a tank or a tarp on the roof, an LED along the eaves; a
+  // yard now and then for the yokocho's stalls and the parked; nothing in a north–south street's band, nothing at a
+  // pier, nothing near the water. And under the deck, above the traffic's clearance, a CEILING OF KIT between the
+  // piers: pipe runs and a cable tray, a duct and a mezzanine box hung from the deck, a signage gantry, lamps.
+  {
+    const yawU = Math.atan2(-hdz, hdx); // a solid's turn along the axis (three's: local x to (cos, −sin))
+    const along = (t: number, lat: number) => ({ x: HIGHWAY.x0 + hdx * t + hnx * lat, z: HIGHWAY.z0 + hdz * t + hnz * lat });
+    const pierT = piers.map((p) => (p.x - HIGHWAY.x0) * hdx + (p.z - HIGHWAY.z0) * hdz).sort((a, b) => a - b);
+    const nearPier = (t: number, r: number) => pierT.some((q) => Math.abs(q - t) < r);
+    const unitTex = [texOf((s) => s.win === 'tiny'), texOf((s) => s.win === 'ribbon'), texOf((s) => s.win === 'grid')];
+    const UNIT_D = 6, UNIT_LAT = ARTERIAL.w / 2 + 1.3 + UNIT_D / 2; // 1.3 off the edge line, six deep, 1.3 short of the pavement
+    const inBand = (t: number) => Math.abs(((t % G) + G) % G - G / 2) < STREET / 2 + 0.6; // a north–south street's band, to its kerb and a hair (onStreet's 2.5 would leave a block ten units of apron)
+    for (const side of [-1, 1] as const) {
+      const lat = side * UNIT_LAT;
+      for (let t = 24; t < hlenA - 24; ) {
+        const w = 5 + rand() * 3.5, gap = rand() < 0.15 ? 6 + rand() * 6 : 0.4 + rand() * 0.8; // a unit (five to eight and a half: two or three to a block), then a hair's gap or a yard
+        const tc = t + w / 2, p = along(tc, lat);
+        const fits = Math.abs(p.x) < REACH - 30 && Math.abs(p.x) > MEDIAN + 24 && !inBand(p.x - w / 2) && !inBand(p.x + w / 2) && !inBand(p.x) && !nearPier(tc, w / 2 + 0.8) && !grid.hit(p.x, 2, p.z, w / 2 + 0.6); // (a pier stands in the median, its cap ends at seven: a unit may stand beside it)
+        if (fits) {
+          const h = rand() < 0.55 ? 7 : 10, tex = unitTex[Math.floor(rand() * unitTex.length)];
+          solidTurned(core, 'facade', 'undercroft', tex, p.x, h / 2, p.z, w, h, UNIT_D, yawU);
+          const nx = -side * hnx, nz = -side * hnz, faceYaw = Math.atan2(nx, nz); // toward the road
+          const f = { x: p.x + nx * (UNIT_D / 2 + 0.05), z: p.z + nz * (UNIT_D / 2 + 0.05) }; // the road face
+          signs.push({ x: f.x + nx * 0.2, y: h - 1.2, z: f.z + nz * 0.2, rotY: faceYaw, w: Math.min(w - 1, 5), h: 1.4, color: signColor(rand), kind: 'board' });
+          if (h > 8 && rand() < 0.7) { // a hanging sign out over the edge line (over a bus: its foot at 6.6), on a bracket at its top and its bottom
+            const u = (rand() - 0.5) * (w - 2), sw = 1.6, sx = f.x + hdx * u, sz = f.z + hdz * u;
+            signs.push({ x: sx + nx * (sw / 2 + 0.3), y: 7.8, z: sz + nz * (sw / 2 + 0.3), rotY: faceYaw + Math.PI / 2, w: sw, h: 2.4, color: signColor(rand), kind: 'hang' });
+            for (const yy of [7.8 + 1.2 - 0.25, 7.8 - 1.2 + 0.25]) clutter.push({ kind: 'bracket', x: sx + nx * (sw + 0.3) / 2, y: yy, z: sz + nz * (sw + 0.3) / 2, w: 0.1, h: 0.1, d: sw + 0.3, rotY: faceYaw });
+          }
+          lantern(f.x + nx * 0.8, 3.0, f.z + nz * 0.8);
+          for (let k = 1; 3 * k + 2.4 < h; k++) for (const i of [-1, 1]) if (rand() < 0.6) clutter.push({ kind: 'ac', x: f.x + nx * 0.28 + hdx * i * w * 0.28, y: 3 * k + 2.75, z: f.z + nz * 0.28 + hdz * i * w * 0.28, w: 0.62, h: 0.5, d: 0.5, rotY: faceYaw }); // condensers on the spandrels
+          if (rand() < 0.5) clutter.push({ kind: 'escape', x: p.x - nx * (UNIT_D / 2 + 0.1) + hdx * (w / 2 - 0.8), y: h * 0.55, z: p.z - nz * (UNIT_D / 2 + 0.1) + hdz * (w / 2 - 0.8), w: 0.5, h: h * 0.9, d: 0.1, rotY: faceYaw + Math.PI }); // a ladder up the back
+          if (rand() < 0.6) clutter.push({ kind: 'pipe', x: f.x + nx * 0.14 + hdx * (w / 2 - 0.5), y: h * 0.48, z: f.z + nz * 0.14 + hdz * (w / 2 - 0.5), w: 0.2, h: h * 0.94, d: 0.2, rotY: faceYaw });
+          if (rand() < 0.4) tarps.push({ x: p.x, y: h + 0.1, z: p.z, w: 4, h: 0.12, d: 4, color: pick(rand, TARP) }); // a tarp on the roof
+          if (h > 8 && rand() < 0.5) solid(core, 'dark', 'street', 0, p.x + hdx * w * 0.2, h + 0.6, p.z + hdz * w * 0.2, 1.4, 1.2, 1.4); // a tank on the roof
+          if (rand() < 0.5) leds.push({ x: f.x + nx * 0.1, y: h - 0.2, z: f.z + nz * 0.1, w: Math.max(0.14, Math.abs(hdx) * (w - 0.6)), h: 0.14, d: Math.max(0.14, Math.abs(hdz) * (w - 0.6)), color: pick(rand, ['#ff4fd8', '#5df2ff', '#C8FF00', '#ffb36b']) }); // an LED along the eaves
+        }
+        t += fits ? w + gap : 1.5; // (a short step past a pier, a street band, the water: the next window is not missed)
+      }
+    }
+    for (let i = 0; i + 1 < pierT.length; i++) { // the ceiling of kit under the deck, between the piers
+      const a = pierT[i], b = pierT[i + 1], span = b - a;
+      if (span < 14 || span > 40) continue;
+      const mid = (a + b) / 2, m = along(mid, 0);
+      if (Math.abs(m.x) > REACH - 30 || Math.abs(m.x) < MEDIAN + 24 || onStreet(m.x)) continue;
+      // pipe runs the length of every span either side of the median, a cable tray under one, LED segments along the other
+      for (const s of [-1, 1]) { const q = along(mid, s * 3.2); clutter.push({ kind: 'pipe', x: q.x, y: 9.9, z: q.z, w: span - 3.4, h: 0.3, d: 0.3, rotY: yawU }); }
+      { const q = along(mid, -2.2); clutter.push({ kind: 'beam', x: q.x, y: 9.3, z: q.z, w: span - 3.4, h: 0.16, d: 0.9, rotY: yawU }); }
+      { const col = pick(rand, ['#5df2ff', '#ff4fd8', '#C8FF00']); for (let u = -span / 2 + 3; u < span / 2 - 3; u += 4.5) { const q = along(mid + u, 3.2); leds.push({ x: q.x, y: 9.55, z: q.z, w: 3.4 * Math.abs(hdx) + 0.24, h: 0.24, d: 3.4 * Math.abs(hdz) + 0.24, color: col }); } }
+      const k = rand();
+      if (k < 0.55) { // a duct along the deck, a mezzanine box hung from it over the outer lane (7.3 above the road), a board on it
+        const q = along(mid, 4.6); clutter.push({ kind: 'duct', x: q.x, y: 9.8, z: q.z, w: span - 4, h: 0.7, d: 0.7, rotY: yawU });
+        const r2 = along(mid + (rand() - 0.5) * (span - 10), -5.0);
+        solidTurned(core, 'dark', 'street', 0, r2.x, 8.6, r2.z, 5, 2.6, 3.2, yawU);
+        signs.push({ x: r2.x - hnx * 1.7, y: 8.6, z: r2.z - hnz * 1.7, rotY: Math.atan2(-hnx, -hnz), w: 3, h: 1.2, color: signColor(rand), kind: 'board' });
+      } else { // a signage gantry across the carriageway, a screen on it
+        solidTurned(core, 'dark', 'street', 0, m.x, 8.9, m.z, 0.3, 0.3, 14.4, yawU);
+        signs.push({ x: m.x + hdx * 0.4, y: 7.9, z: m.z + hdz * 0.4, rotY: Math.atan2(hdx, hdz), w: 5, h: 1.6, color: '#5df2ff', kind: 'screen' });
+      }
+      for (const s of [-1, 1]) for (const u of [-span * 0.25, span * 0.25]) { const q = along(mid + u, s * 2.6); posts.push({ x: q.x, z: q.z, h: 0.8, y: 8.7 }); } // PENDANT LAMPS under the deck, four a span: real lights on the kit and the road below
+    }
+  }
   // THE APRONS (owner: a lived-in boulevard): along the arterial between the kerb and the pavement, where no ramp comes
   // down — parked vehicles along the kerb, market stalls, shanties under the ramps' high parts, kiosks; nothing in a
   // north–south street's band, nothing near the water, nothing under or on a low slab
@@ -2549,7 +2593,7 @@ export function planCity(seed: number): Plan {
       for (const side of [-1, 1] as const) {
         const a = rand();
         if (a < 0.3) continue;
-        const lat = side * (ARTERIAL.w / 2 + 2.6 + rand() * 4.6); // inside the apron
+        const lat = side * (ARTERIAL.w / 2 + 2.6 + rand() * 3.3); // inside the apron (a parked box is 4.6 square: at 13.4 it stays off the pavement at 16.1)
         const px = x + hnx * lat + hdx * (rand() - 0.5) * 3, pz = z + hnz * lat + hdz * (rand() - 0.5) * 3;
         const over = rampAt(px, pz);
         if (over !== null && over < 3.6) continue;
