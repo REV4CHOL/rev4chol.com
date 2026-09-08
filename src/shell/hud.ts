@@ -26,7 +26,7 @@ export function mountHud(): Hud {
 
   const tr = document.createElement('div');
   tr.className = 'hud hud-tr micro';
-  tr.innerHTML = `<span id="hud-count"></span> <button id="hud-snd" aria-pressed="${sound.enabled}">SND ${sound.enabled ? '●' : '○'}</button> <button id="hud-mus" aria-pressed="${music.enabled}" title="Music: on / off">MUS ${music.enabled ? '●' : '○'}</button> <button id="hud-mtn" aria-pressed="${!calmActive()}" title="Motion: full / calm">MTN ${calmActive() ? '○' : '●'}</button>`;
+  tr.innerHTML = `<span id="hud-count"></span> <button id="hud-snd" aria-pressed="${sound.enabled}" title="Sound effects: on / off">SFX ${sound.enabled ? '●' : '○'}</button> <button id="hud-mus" aria-pressed="${music.enabled}" title="Music: on / off">MUS ${music.enabled ? '●' : '○'}</button> <button id="hud-mtn" aria-pressed="${!calmActive()}" title="Motion: full / calm">MTN ${calmActive() ? '○' : '●'}</button>`;
 
   document.body.append(bl, br, tr);
 
@@ -42,7 +42,7 @@ export function mountHud(): Hud {
   const snd = tr.querySelector('#hud-snd') as HTMLButtonElement;
   snd.addEventListener('click', () => {
     const on = sound.toggle();
-    snd.textContent = `SND ${on ? '●' : '○'}`;
+    snd.textContent = `SFX ${on ? '●' : '○'}`;
     snd.setAttribute('aria-pressed', String(on));
     if (on) {
       sound.click(); // audible confirmation — re-enabling must be heard

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Vector3 } from 'three';
-import { ARTERIAL, ARTERIAL_ROW, arterialLat, arterialZ, AutoFlight, BOUND, CAM_R, CANAL, CANAL_END, carriagewayAt, CAT_TAIL, catTailCorners, CITADEL, cityTiles, CollisionGrid, districtOf, EXT, G, HALF, HIGHWAY, LANE_CAR, LANE_W, HW_FAR, isMass, LANDMARK_ARCH, MEDIAN, OUTER, planCity, RAIL, RAMP, RAMP_W, rampY, ROAD, starPositions, STREET, streetAt, TILE_P, tourRoute } from '../src/about/city-plan';
+import { ARTERIAL, ARTERIAL_ROW, arterialLat, arterialZ, AutoFlight, BOUND, CAM_R, CANAL, CANAL_END, carriagewayAt, CAT_TAIL, catTailCorners, CITADEL, cityTiles, CollisionGrid, corridorFiller, cutAtCorridor, districtOf, EXT, footprintInCorridor, G, HALF, HIGHWAY, LANE_CAR, LANE_W, HW_FAR, isMass, LANDMARK_ARCH, MEDIAN, OUTER, planCity, RAIL, RAMP, RAMP_W, rampY, ROAD, starPositions, STREET, streetAt, TILE_P, tourRoute } from '../src/about/city-plan';
 import { mulberry32 } from '../src/lib/rng';
 import { streetPoint } from '../src/about/city-traffic';
 import { FAMILIES, FLOOR as SKIN_FLOOR, PX as SKIN_PX, SHOP as SKIN_SHOP } from '../src/about/city-skins';
@@ -383,7 +383,8 @@ describe('The viaduct over its arterial (owner: roads that exist in real life)',
 
   it('keeps the highway\'s carriageway clear end to end (owner: "rails clipping on the main highways"): nothing solid at deck height across its lanes', () => {
     const hw = plan.streets.find((s) => s.kind === 'highway')!;
-    for (let t = 2; t < hw.len; t += 4) {
+    // (the street runs HW_FAR past each end of the square: the continuation crosses the sprawl's boxes, which the fog hides; the deck's own span is what must be clear)
+    for (let t = HW_FAR + 2; t < hw.len - HW_FAR; t += 4) {
       for (const off of [-6.5, -3.5, 0, 3.5, 6.5]) {
         const x = hw.x0 + hw.dx * t - hw.dz * off, z = hw.z0 + hw.dz * t + hw.dx * off;
         expect(plan.grid.hit(x, hw.y + 2, z, 0.3), `the deck at ${x.toFixed(0)},${z.toFixed(0)}`).toBeNull();
@@ -797,5 +798,69 @@ describe('The endless city (owner: beyond the boundaries, the illusion of a city
     }
     expect(new Set(cityTiles(1).map((t) => t.q)).size, 'the first ring turns its tiles more than one way').toBeGreaterThanOrEqual(3);
     expect(2 * TILE_P - TILE_P / 2, "ring 2's near edge lies inside the far plane").toBeLessThan(1500);
+    const far = cityTiles(7, 3); // the far LOD's rings
+    expect(far.length).toBe(200);
+    expect(far.every((t) => t.ring >= 3 && t.ring <= 7)).toBe(true);
+    expect(Math.max(...far.map((t) => Math.max(Math.abs(t.dx), Math.abs(t.dz)))) + TILE_P / 2, 'the far edge').toBe(5985);
+    expect(cityTiles(2, 2).length).toBe(16);
+  });
+});
+
+describe('The corridor through the tiles (owner: "that spot outside the border — the road looks too ugly")', () => {
+  const hx = HIGHWAY.x1 - HIGHWAY.x0, hz = HIGHWAY.z1 - HIGHWAY.z0, L = Math.hypot(hx, hz);
+  const at = (t: number, lat: number): [number, number] => [HIGHWAY.x0 + hx / L * t - hz / L * lat, HIGHWAY.z0 + hz / L * t + hx / L * lat];
+  const along = (b: { x: number; z: number }) => ((b.x - HIGHWAY.x0) * hx + (b.z - HIGHWAY.z0) * hz) / L;
+  it('culls a copy by its footprint: what reaches inside the right of way goes, what stands clear of it stays', () => {
+    const [x, z] = at(1200, 0);
+    expect(footprintInCorridor(x, z, 10, 10)).toBe(true);
+    const [x2, z2] = at(1200, ARTERIAL_ROW + 5);
+    expect(footprintInCorridor(x2, z2, 10, 10), 'a ten-wide box five past the row reaches in').toBe(true);
+    const [x3, z3] = at(1200, ARTERIAL_ROW + 8);
+    expect(footprintInCorridor(x3, z3, 10, 10), 'eight past the row it clears').toBe(false);
+    expect(footprintInCorridor(x3, z3, 10, 40), 'a deep one reaches in').toBe(true);
+    const [x4, z4] = at(-1500, -(ARTERIAL_ROW + 8));
+    expect(footprintInCorridor(x4, z4, 10, 10), 'the other side, the other way').toBe(false);
+  });
+  it('cuts a copied street crossing the corridor into two pieces whose whole width clears the building line; leaves one clear of it whole', () => {
+    for (const [dx, dz, x0, z0] of [[0, 1, 1200, -450], [1, 0, 800, arterialZ(1200) - 10]] as const) {
+      const road = { x0, z0, dx, dz, len: 798, y: 0, kind: 'road' as const, width: STREET };
+      const pieces = cutAtCorridor(road);
+      expect(pieces.length, `a ${dx ? 'x' : 'z'} road`).toBe(2);
+      expect(pieces[0].len + pieces[1].len).toBeLessThan(798);
+      for (const [p, t] of [[pieces[0], pieces[0].len], [pieces[1], 0]] as const) for (const off of [-STREET / 2, STREET / 2]) {
+        const cx = p.x0 + p.dx * t - p.dz * off, cz = p.z0 + p.dz * t + p.dx * off; // the cut end's corners
+        expect(Math.abs(arterialLat(cx, cz)), 'a corner of the cut end').toBeGreaterThanOrEqual(ARTERIAL_ROW + 1 - 0.01);
+      }
+      expect(Math.abs(arterialLat(pieces[0].x0 + pieces[0].dx * pieces[0].len, pieces[0].z0 + pieces[0].dz * pieces[0].len)), 'no farther than it must').toBeLessThan(ARTERIAL_ROW + 1 + STREET / 2 + 0.01);
+    }
+    const far = { x0: 800, z0: 600, dx: 1, dz: 0, len: 798, y: 0, kind: 'road' as const, width: STREET };
+    expect(cutAtCorridor(far)).toEqual([far]);
+    const stub = { x0: 1200, z0: arterialZ(1200) - 3, dx: 0, dz: 1, len: 6, y: 0, kind: 'lane' as const, width: LANE_W };
+    expect(cutAtCorridor(stub), 'a stub inside the right of way').toEqual([]);
+  });
+  it('lines the corridor through the tiles with boxes: both sides, both ways, from the square\'s edge to the tiles\', gap-free, inner faces on the building line, clear of what is kept', () => {
+    const boxes = corridorFiller([], 2, mulberry32(7));
+    expect(boxes.length).toBeGreaterThan(300);
+    for (const b of boxes) {
+      expect(b.kind).toBe('facade'); expect(b.h).toBeGreaterThanOrEqual(10); expect(b.h).toBeLessThanOrEqual(40);
+      expect(b.w).toBeGreaterThanOrEqual(4); expect(b.w).toBeLessThanOrEqual(20); expect(b.d).toBeGreaterThanOrEqual(8); expect(b.d).toBeLessThanOrEqual(14);
+      expect(Math.abs(arterialLat(b.x, b.z)) - b.d / 2, 'the inner face on the building line').toBeCloseTo(ARTERIAL_ROW + 0.8, 5);
+      expect(Math.abs(b.x)).toBeGreaterThan(TILE_P / 2 - 5); expect(Math.abs(b.x)).toBeLessThan(TILE_P / 2 + 2 * TILE_P + 5);
+      expect(b.rotY).toBeCloseTo(Math.atan2(-hz, hx), 6);
+    }
+    for (const side of [-1, 1]) for (const way of [-1, 1]) {
+      const run = boxes.filter((b) => Math.sign(arterialLat(b.x, b.z)) === side && Math.sign(b.x) === way).sort((a, b) => along(a) - along(b));
+      expect(run.length, 'a side, a way').toBeGreaterThan(70);
+      for (let i = 1; i < run.length; i++) expect(along(run[i]) - run[i].w / 2 - (along(run[i - 1]) + run[i - 1].w / 2), 'a gap').toBeLessThan(0.01);
+    }
+    expect(corridorFiller([], 1, mulberry32(7)).every((b) => Math.abs(b.x) < TILE_P / 2 + TILE_P + 5), 'one ring: to the first ring\'s edge').toBe(true);
+    const [kx, kz] = at(1400, ARTERIAL_ROW + 8);
+    const walled = corridorFiller([{ x: kx, z: kz, w: 12, d: 12 }], 2, mulberry32(7));
+    for (const b of walled) {
+      const ex = b.w / 2 * Math.abs(Math.cos(b.rotY!)) + b.d / 2 * Math.abs(Math.sin(b.rotY!)), ez = b.w / 2 * Math.abs(Math.sin(b.rotY!)) + b.d / 2 * Math.abs(Math.cos(b.rotY!));
+      expect(Math.abs(b.x - kx) < ex + 6 - 0.2 && Math.abs(b.z - kz) < ez + 6 - 0.2, 'over the kept mass').toBe(false);
+    }
+    expect(walled.some((b) => along(b) > 1400 + 20 && along(b) < 1400 + 60 && arterialLat(b.x, b.z) > 0), 'the wall resumes past it').toBe(true);
+    expect(walled.length).toBeLessThan(boxes.length + 40); expect(walled.length).toBeGreaterThan(boxes.length - 40);
   });
 });

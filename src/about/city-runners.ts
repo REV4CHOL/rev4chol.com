@@ -21,11 +21,11 @@ export const RUN_FRAME = { walkA: 0, walkB: 1, stand: 2, talk: 4, run: 8, leap: 
 export interface Solids { hit(x: number, y: number, z: number, r: number): unknown }
 
 const LEAP = 12, THRUST = 60, ROCKET_MIN = 150, ROCKET_MAX = 520;
-const RUN_V = 0.14;
-/** THE PACE (owner: fewer runners, fewer jumps, slower): a leap flies at 0.14 a frame, a thruster hop at 0.25, a
- *  rocket at 0.75; a runner rests one to two seconds on a roof between its runs, and three choices in five plan a
+const RUN_V = 0.07; // (owner: the runners at half pace)
+/** THE PACE (owner: fewer runners, fewer jumps, slower; then "slower by 50 %, especially during their flight"): a leap
+ *  flies at 0.07 a frame, a thruster hop at 0.125, a rocket at 0.375; a runner rests one to two seconds on a roof between its runs, and three choices in five plan a
  *  flight. (It used to fly again on the heels of a landing: a flight every five seconds — now one every ten or so.) */
-const LEAP_V = 0.14, THRUST_V = 0.25, ROCKET_V = 0.75, REST: [number, number] = [45, 135], FLIGHT_ODDS = 0.6;
+const LEAP_V = 0.07, THRUST_V = 0.125, ROCKET_V = 0.375, REST: [number, number] = [45, 135], FLIGHT_ODDS = 0.6;
 
 /** The axis-aligned gap between two roofs' footprints (negative where they overlap). */
 export const roofGap = (a: Roof, b: Roof): number => Math.max(Math.abs(b.x - a.x) - (a.w + b.w) / 2, Math.abs(b.z - a.z) - (a.d + b.d) / 2);
@@ -203,7 +203,7 @@ export class Runners {
       if (!flight) continue;
       r.to = flight.to; r.from = flight.from; r.dest = flight.dest; r.lift = flight.lift;
       const dist = Math.hypot(flight.dest[0] - flight.from[0], flight.dest[2] - flight.from[2]);
-      r.T = Math.max(kind === 'leap' ? 32 : kind === 'thrust' ? 72 : 200, Math.round(dist / (kind === 'leap' ? LEAP_V : kind === 'thrust' ? THRUST_V : ROCKET_V)));
+      r.T = Math.max(kind === 'leap' ? 64 : kind === 'thrust' ? 144 : 400, Math.round(dist / (kind === 'leap' ? LEAP_V : kind === 'thrust' ? THRUST_V : ROCKET_V)));
       r.t = 0;
       r.tx = flight.from[0]; r.tz = flight.from[2];
       r.act = 'run';

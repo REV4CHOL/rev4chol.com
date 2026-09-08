@@ -11,7 +11,7 @@
  *  Pure: colours are hex strings, lerped here; no three, no DOM; tested. */
 
 export type TimeOfDay = 'night' | 'dusk' | 'dawn' | 'haze' | 'day';
-export const TIMES: TimeOfDay[] = ['night', 'dusk', 'dawn', 'haze', 'day'];
+export const TIMES: TimeOfDay[] = ['dawn', 'day', 'haze', 'dusk', 'night']; // the clock's order (owner: DAWN DAY HAZE DUSK NIGHT); the page still opens at night
 
 export interface Grade { low: [number, number, number]; high: [number, number, number]; contrast: number }
 export interface Look {
@@ -108,7 +108,7 @@ export const LOOKS: Record<TimeOfDay, Look> = {
     label: 'HAZE',
     key: { dir: [-200, 200, -120], color: '#fff1de', intensity: 1.4 },
     hemi: { sky: '#dfe6f0', ground: '#c0b8aa', intensity: 1.25 },
-    fog: { color: '#dde2ea', density: 3.0 },
+    fog: { color: '#dde2ea', density: 5.0 }, // (the tiers' fog thinned to a third for the far horizon: five keeps the hazy morning white)
     exposure: 0.9, bloom: 1.15, windows: 0.25, lamps: 0.25, walls: 0.6, bleach: { color: '#cfcfd2', amount: 0.4 }, glass: '#3a4258', shadows: false, groundGlow: 0.4, groundLift: 1.05, reflect: 0.8, stars: 0, moon: 0,
     sun: { color: '#fff8ee', size: 140, opacity: 0.8 },
     sky: {
@@ -202,6 +202,16 @@ export function blendLooks(a: Look, b: Look, t: number): Look {
   };
 }
 
+/** THE BEYOND'S COLOUR (owner: the far horizon always in view): the dome's colour at the horizon band, v = 0.515, the
+ *  gradient alone (no lobe) — what the fog of war turns the far city and the ground's far edge into, so they meet the
+ *  dome in its own colour. Two looks' colours are blended by the crossfade's ease (the stops themselves are not). */
+export function horizonColor(look: Look, v = 0.515): string {
+  const stops = look.sky.stops;
+  let i = 0;
+  while (i < stops.length - 2 && stops[i + 1][0] < v) i += 1;
+  const [p0, c0] = stops[i], [p1, c1] = stops[i + 1];
+  return lerpHex(c0, c1, p1 > p0 ? clamp01((v - p0) / (p1 - p0)) : 0);
+}
 /** The dome as pixels: `size`×`size`, u the azimuth (three's sphere: u = 0
  *  at −x, a quarter turn to +z), v from the nadir (row size−1) to the zenith
  *  (row 0). The gradient by v, then the lobe about the key's azimuth at the

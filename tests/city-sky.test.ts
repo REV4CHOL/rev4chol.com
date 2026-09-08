@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { blendLooks, ease, hexToRgb, lerpHex, LOOKS, nextTime, paintSky, parseTime, TIMES } from '../src/about/city-sky';
+import { blendLooks, ease, hexToRgb, horizonColor, lerpHex, LOOKS, nextTime, paintSky, parseTime, TIMES } from '../src/about/city-sky';
 
 const HEX = /^#[0-9a-f]{6}$/;
 
 describe('Time of day', () => {
   it('has a complete, sane look for every time', () => {
-    expect(TIMES).toEqual(['night', 'dusk', 'dawn', 'haze', 'day']);
+    expect(TIMES).toEqual(['dawn', 'day', 'haze', 'dusk', 'night']);
     for (const t of TIMES) {
       const L = LOOKS[t];
       expect(L.label.length).toBeGreaterThan(2);
@@ -77,7 +77,22 @@ describe('Time of day', () => {
     expect(parseTime('dawn')).toBe('dawn');
     expect(parseTime('noon')).toBe('night');
     expect(parseTime(null)).toBe('night');
-    expect(nextTime('night')).toBe('dusk');
-    expect(nextTime('day')).toBe('night');
+    expect(nextTime('night')).toBe('dawn');
+    expect(nextTime('day')).toBe('haze');
+  });
+});
+
+describe("The beyond's colour (owner: the far horizon always in view)", () => {
+  it("is the dome's own colour at the horizon band, the gradient alone, for every look", () => {
+    for (const t of TIMES) {
+      const L = LOOKS[t];
+      const c = horizonColor(L);
+      expect(c).toMatch(HEX);
+      const plain = { ...L, sky: { ...L.sky, lobe: { ...L.sky.lobe, strength: 0 } } };
+      const px = paintSky(plain, 201); // row 103 is v = 0.515 exactly
+      const o = 103 * 201 * 4, [r, g, b] = hexToRgb(c);
+      expect(Math.abs(px[o] - r) + Math.abs(px[o + 1] - g) + Math.abs(px[o + 2] - b), t).toBeLessThanOrEqual(3);
+    }
+    expect(horizonColor(LOOKS.night)).not.toBe(LOOKS.night.fog.color);
   });
 });

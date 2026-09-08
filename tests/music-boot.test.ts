@@ -37,3 +37,33 @@ describe('The music boot in the page heads', () => {
     const fresh = run(null, null); fresh.a.fire('loadedmetadata'); expect(fresh.a.currentTime).toBe(0); expect(fresh.a.plays).toBe(1);
   });
 });
+
+describe('The music boot on a phone (owner: the music stopped at every section and had to be re-enabled by hand)', () => {
+  it('refused (no gesture on the document yet), it plays again inside the first activating gesture — pointerup, touchend, click, keydown — once each', async () => {
+    const code = bootOf('about.html')!.replace(/^<script>/, '').replace(/<\/script>$/, '');
+    const docLs = new Map<string, { cb: () => void; opts: unknown }[]>();
+    let refuse = true;
+    const a = { preload: '', loop: false, volume: 0, src: '', currentTime: 0, duration: 220, plays: 0, addEventListener() { /* none needed */ }, play() { this.plays += 1; return refuse ? Promise.reject(new Error('NotAllowedError')) : Promise.resolve(); } };
+    const doc = { createElement: () => a, addEventListener(t: string, cb: () => void, opts: unknown) { docLs.set(t, [...(docLs.get(t) ?? []), { cb, opts }]); } };
+    const win: Record<string, unknown> = {};
+    const fn = new Function('window', 'document', 'localStorage', 'sessionStorage', 'performance', 'setTimeout', 'Date', code);
+    fn(win, doc, { getItem: () => null }, { getItem: () => null }, { now: () => 1 }, () => undefined, { now: () => 1 });
+    expect(a.plays).toBe(1);
+    await Promise.resolve(); await Promise.resolve();
+    expect([...docLs.keys()].sort()).toEqual(['click', 'keydown', 'pointerup', 'touchend']);
+    for (const l of docLs.values()) expect(l[0].opts).toEqual({ once: true, passive: true });
+    refuse = false;
+    docLs.get('pointerup')![0].cb();
+    expect(a.plays).toBe(2);
+    expect(win.rvlMusicBoot).toBe(a);
+  });
+  it('arms no listener when the first play is granted', async () => {
+    const code = bootOf('about.html')!.replace(/^<script>/, '').replace(/<\/script>$/, '');
+    let armed = 0;
+    const a = { preload: '', loop: false, volume: 0, src: '', currentTime: 0, duration: 220, plays: 0, addEventListener() { /* none needed */ }, play() { this.plays += 1; return Promise.resolve(); } };
+    const fn = new Function('window', 'document', 'localStorage', 'sessionStorage', 'performance', 'setTimeout', 'Date', code);
+    fn({}, { createElement: () => a, addEventListener() { armed += 1; } }, { getItem: () => null }, { getItem: () => null }, { now: () => 1 }, () => undefined, { now: () => 1 });
+    await Promise.resolve(); await Promise.resolve();
+    expect(a.plays).toBe(1); expect(armed).toBe(0);
+  });
+});

@@ -81,6 +81,14 @@ describe('Music (owner: continuous across pages and sections, a MUS button, WATC
     expect(d.volume).toBeCloseTo(VOLUME, 5); expect(m.time()).toBe(50);
   });
 
+  it("MUS pressed while on but silent (refused, waiting — a phone's cold load) plays instead of turning it off", async () => {
+    const d = deck(true), local = mem(), m = new Music(d, local, mem(), () => 0, timers);
+    m.init(); await flush();
+    expect(m.enabled).toBe(true); expect(m.playing()).toBe(false); expect(d.plays).toBe(1);
+    expect(m.toggle()).toBe(true); await flush();
+    expect(m.enabled).toBe(true); expect(d.plays).toBe(2); expect(local.getItem('rvl-music-v1')).not.toBe('off');
+  });
+
   it('MUS off stops and remembers; on lifts a hold and plays; leaving saves and fades', async () => {
     const d = deck(), local = mem(), mem2 = mem(), m = new Music(d, local, mem2, () => 0, timers);
     m.init(); d.fire('loadedmetadata'); await flush();

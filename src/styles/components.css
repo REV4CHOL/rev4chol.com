@@ -367,7 +367,7 @@
   .hk-ticks { display: none; }
   .hk-spine { opacity: 0.35; }
   /* the phone poster drops the bottom telemetry (owner decree): no X:Y, no
-     timecode, no session id — SND/MTN top-right stay, they're controls */
+     timecode, no session id — SFX/MTN top-right stay, they're controls */
   .page-home .hud-bl, .page-home .hud-br { display: none; }
   .home-main { padding-bottom: 84px; }
   /* the poster must FIT the phone: any horizontal overflow expands the mobile

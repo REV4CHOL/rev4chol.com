@@ -172,3 +172,22 @@ corridor from the fence (lined, no bare band, streets ending at the building lin
 the tour's terminus (city to the horizon, no silhouette wall, no line), the highway's end from the fence (vehicles carry
 on), AUTO twice from FREE (a first-frame move under a unit), timings at ultra; the phone path (the pane's mobile preset):
 runners 70, cars about 810, the LOD rings present; the boot snippet's listeners in its test; the live site after deploy.
+
+## As built (2026-09-08)
+Everything above, with these refinements found in the building:
+- **The corridor's cut streets** end where their WHOLE width clears the building line (the centre line at ROW + 1 +
+  half the width's reach across the corridor), not where the centre line alone does — otherwise half a road's end
+  face lay inside the right of way. `cutAtCorridor`, `footprintInCorridor`, `corridorFiller` and the exported `Rect`
+  live in city-plan.ts, tested; the renderer keeps the copies' world footprints and the square's rim as the filler's
+  `kept` list.
+- **The far LOD on a phone** builds ring 2 from the masses 12 and more high and rings 3–4 from those 24 and more (a
+  phone at 2.2 M vertices of LOD would have paid for what its fog hides). Desktop as specified: rings 3–4 at 12,
+  5–7 at 24, ring 2's stand-in at the tiers below high. The far walls' glow runs at 2.2 × the look's windows so the
+  lights still prick through the fog of war's 0.85–0.95.
+- **The street haze** keeps its old strength: its density scale moved from 0.001 to 0.00035 with the tiers' fog.
+- **The clock** scales the rigs' damping too (the auto pan, the body's lag, the free rig's head, throttle, velocity
+  and roll, the tour's smoothing) by `frameScale`, not only the distances — the same feel at 30, 60 and 120 Hz.
+- **Measured on the pane:** desktop high tier 60 fps at the fence, the far horizon in view from every height and
+  every look (night, day, dusk); the mobile preset 60 fps with 70 runners, 803 vehicles (550 + 253 on the
+  continuation), 1,783 figures (900 walkers and the rest); AUTO's first-frame move 0.017.
+- **Air traffic** is 40 % slower with the ground traffic (the flyers rode the same pace decree).

@@ -43,12 +43,14 @@ import { isMobile, reducedMotion } from '../lib/env';
 import { mulberry32 } from '../lib/rng';
 import {
   AirLane, ART_COLOR, ARTERIAL, ARTERIAL_ROW, arterialLat, ARTS, AutoFlight, bandPoint, bandPositions, BOUND, CAM_R, CANAL, DIAGONAL, EXT, G, HALF, HIGHWAY, HoloKind, LANE_CAR, LANE_W, OUTER,
-  CANAL_END, carriagewayAt, CAT_TAIL, catTailBoxes, cityTiles, CityTile, hasShop, HW_FAR, isMass, LANDMARK_ARCH, planCity, Poi, RAIL, RAMP_W, rampY, ROAD, Searchlight, Sign, signColor, Solid, starPositions, streetAt, STREET, Street, tourRoute,
+  CANAL_END, carriagewayAt, CAT_TAIL, catTailBoxes, cityTiles, CityTile, corridorFiller, cutAtCorridor, footprintInCorridor, hasShop, HW_FAR, isMass, LANDMARK_ARCH, planCity, Poi, RAIL, RAMP_W, rampY, ROAD, Searchlight, Sign, signColor, Solid, starPositions, streetAt, STREET, Street, TILE_P, tourRoute,
 } from './city-plan';
 import { fov24, HazePass, LensPass, lensTarget } from './city-post';
 import { CAST, People, Zone, marketZones } from './city-people';
 import { Runners } from './city-runners';
-import { blendLooks, ease, lerpHex, Look as SkyLook, LOOKS as SKY, paintSky, TimeOfDay } from './city-sky';
+import { frameScale, owed, STEP, stepsAllowed } from './city-clock';
+import { farMasses, mergeBoxes } from './city-far';
+import { blendLooks, ease, horizonColor, lerpHex, Look as SkyLook, LOOKS as SKY, paintSky, TimeOfDay } from './city-sky';
 import { armReach, convexHull, DECK_KERB, SPEC, throughReach, Traffic } from './city-traffic';
 import { ATLAS, CELLS, FAMILIES, FLOOR, heightToNormal, PX as SKIN_PX, SHOP, skinFor, tintJitter, UPPER, VARIANTS } from './city-skins';
 
@@ -74,6 +76,7 @@ ShaderChunk.fog_vertex = /* glsl */ `
 ShaderChunk.fog_pars_fragment = /* glsl */ `
 #ifdef USE_FOG
   uniform vec3 fogColor;
+  uniform vec3 uBeyond; // the sky's horizon band: what the fog of war dissolves the far city into (city-sky's horizonColor)
   varying float vFogDepth;
   varying vec3 vFogWorld;
   #ifdef FOG_EXP2
@@ -92,7 +95,7 @@ ShaderChunk.fog_fragment = /* glsl */ `
   #endif
   // the air inside the fence is clear but for a breath of haze low in the streets (owner: the whole map at once,
   // and no fog wall that moves with the eye); a hazy look thickens it
-  float haze = 0.14 * clamp( fogDensity / 0.001, 0.6, 3.0 ) * exp( - max( vFogWorld.y, 0.0 ) * 0.03 ) * ( 1.0 - exp( - vFogDepth * 0.006 ) );
+  float haze = 0.14 * clamp( fogDensity / 0.00035, 0.6, 3.0 ) * exp( - max( vFogWorld.y, 0.0 ) * 0.03 ) * ( 1.0 - exp( - vFogDepth * 0.006 ) );
   fogFactor = min( 0.985, 1.0 - ( 1.0 - fogFactor ) * ( 1.0 - min( haze, 0.9 ) ) );
   // THE ENDLESS CITY (owner: the illusion of a city spanning infinite): the fog of war's wall at the fence is gone —
   // the city's own copies stand past it (city-plan's cityTiles) and the distance fog owns them; the last stretch
@@ -102,10 +105,16 @@ ShaderChunk.fog_fragment = /* glsl */ `
   // the distance to the square, not to its centre), whatever the eye's place — nothing moves with the eye, nothing
   // stands like a wall — to near total nine hundred out; the last stretch before the far plane fades the rest. An
   // opaque surface writes its amount into alpha for the haze pass, which blurs by it: the distance blur.
-  float beyond = smoothstep( 0.0, 900.0, length( max( abs( vFogWorld.xz ) - vec2( 280.0 ), 0.0 ) ) );
-  fogFactor = max( fogFactor, beyond * 0.985 );
-  fogFactor = max( fogFactor, smoothstep( 1050.0, 1450.0, vFogDepth ) );
-  gl_FragColor.rgb = mix( gl_FragColor.rgb, fogColor, fogFactor );
+  // THE FAR HORIZON (owner: the whole city on the far horizon, from any height; always in view, never rendered along
+  // with the eye): the fog of war never closes — 0.85 nine hundred out, then on to 1 at six thousand, where the far
+  // LOD's last ring ends (city-far.ts) — and as it rises it takes the SKY'S colour at the horizon band (uBeyond) in
+  // place of the fog's: the far city and the ground's far edge dissolve into the dome, no line. The far-plane fade
+  // (16,000–19,000) is a last resort the ground alone reaches.
+  float away = length( max( abs( vFogWorld.xz ) - vec2( 280.0 ), 0.0 ) );
+  float beyond = 0.85 * smoothstep( 0.0, 900.0, away ) + 0.15 * smoothstep( 900.0, 6000.0, away );
+  fogFactor = max( fogFactor, beyond );
+  fogFactor = max( fogFactor, smoothstep( 16000.0, 19000.0, vFogDepth ) );
+  gl_FragColor.rgb = mix( gl_FragColor.rgb, mix( fogColor, uBeyond, smoothstep( 0.3, 1.0, beyond ) ), fogFactor );
   #ifdef OPAQUE
     gl_FragColor.a = 1.0 - beyond;
   #endif
@@ -125,23 +134,31 @@ const FOG_ADD = /* glsl */ `
   #endif
   // the air inside the fence is clear but for a breath of haze low in the streets (owner: the whole map at once,
   // and no fog wall that moves with the eye); a hazy look thickens it
-  float haze = 0.14 * clamp( fogDensity / 0.001, 0.6, 3.0 ) * exp( - max( vFogWorld.y, 0.0 ) * 0.03 ) * ( 1.0 - exp( - vFogDepth * 0.006 ) );
+  float haze = 0.14 * clamp( fogDensity / 0.00035, 0.6, 3.0 ) * exp( - max( vFogWorld.y, 0.0 ) * 0.03 ) * ( 1.0 - exp( - vFogDepth * 0.006 ) );
   fogFactor = min( 0.985, 1.0 - ( 1.0 - fogFactor ) * ( 1.0 - min( haze, 0.9 ) ) );
   // THE ENDLESS CITY (owner: the illusion of a city spanning infinite): the fog of war's wall at the fence is gone —
   // the city's own copies stand past it (city-plan's cityTiles) and the distance fog owns them; the last stretch
   // before the far plane fades out fully, so the plane never cuts a building
-  float beyond = smoothstep( 0.0, 900.0, length( max( abs( vFogWorld.xz ) - vec2( 280.0 ), 0.0 ) ) ); // the fog of war (see fog_fragment)
-  fogFactor = max( fogFactor, beyond * 0.985 );
-  fogFactor = max( fogFactor, smoothstep( 1050.0, 1450.0, vFogDepth ) );
+  float away = length( max( abs( vFogWorld.xz ) - vec2( 280.0 ), 0.0 ) ); // the fog of war (see fog_fragment)
+  float beyond = 0.85 * smoothstep( 0.0, 900.0, away ) + 0.15 * smoothstep( 900.0, 6000.0, away );
+  fogFactor = max( fogFactor, beyond );
+  fogFactor = max( fogFactor, smoothstep( 16000.0, 19000.0, vFogDepth ) );
   gl_FragColor.rgb *= 1.0 - fogFactor;
 #endif`;
 function additiveFog<T extends Material>(m: T): T {
   m.onBeforeCompile = (shader: WebGLProgramParametersWithUniforms) => {
+    shader.uniforms.uBeyond = uBeyond;
     shader.fragmentShader = shader.fragmentShader.replace('#include <fog_fragment>', FOG_ADD);
   };
   m.customProgramCacheKey = () => 'additive-fog';
   return m;
 }
+
+/** THE BEYOND'S COLOUR: the one uniform every fog-lit material takes (the look's horizon band, city-sky's
+ *  horizonColor, blended through a crossfade), handed out by the Material prototype's hook — a material with a hook
+ *  of its own (the skin, the additive decals, the far fleet and its bodies, the billboards, the people) adds it there. */
+const uBeyond = { value: new Color('#577fba') };
+Material.prototype.onBeforeCompile = function (shader: WebGLProgramParametersWithUniforms) { shader.uniforms.uBeyond = uBeyond; };
 
 /** QUALITY (owner: a render distance that adapts): four tiers of far plane,
  *  fog density, shadows and pixel size. The opening tier reads the
@@ -149,11 +166,11 @@ function additiveFog<T extends Material>(m: T): T {
  *  and the device; from then on the measured frame time steps the tier
  *  down when frames run long and back up when they run short. */
 interface Tier { label: string; far: number; fog: number; shadows: boolean; pix: number }
-const TIERS: Tier[] = [ // (owner: the whole map inside the fence at once, at every tier; past it the endless city's tiles, ring 1 at every tier, ring 2 from high)
-  { label: 'low', far: 1500, fog: 0.0009, shadows: false, pix: 3 },
-  { label: 'mid', far: 1500, fog: 0.0008, shadows: false, pix: 2 },
-  { label: 'high', far: 1500, fog: 0.0008, shadows: true, pix: 1 }, // (high and ultra render at the screen's own pixels: the owner's PC 'window glitch' was a half-resolution render's sparkle)
-  { label: 'ultra', far: 1500, fog: 0.0007, shadows: true, pix: 1 },
+const TIERS: Tier[] = [ // (owner: the whole map inside the fence at once, at every tier; past it the endless city's tiles, ring 1 at every tier, ring 2 from high, the far LOD's rings to 5,985 always; the eye's fog thin — 0.13 at 1,500, 0.79 at 5,000 — the beyond is the world's, not the eye's: see fog_fragment)
+  { label: 'low', far: 20000, fog: 0.0003, shadows: false, pix: 3 },
+  { label: 'mid', far: 20000, fog: 0.0003, shadows: false, pix: 2 },
+  { label: 'high', far: 20000, fog: 0.00028, shadows: true, pix: 1 }, // (high and ultra render at the screen's own pixels: the owner's PC 'window glitch' was a half-resolution render's sparkle)
+  { label: 'ultra', far: 20000, fog: 0.00025, shadows: true, pix: 1 },
 ];
 function startTier(): number {
   const nav = navigator as Navigator & { connection?: { effectiveType?: string; saveData?: boolean; downlink?: number }; deviceMemory?: number };
@@ -360,6 +377,7 @@ function skinMaterial(atlas: SkinAtlas, cyl: boolean, far: boolean): MeshStandar
   const offs = FAMILIES.map((f) => new Vector2(f.wx, f.wy));
   const N = FAMILIES.length;
   mat.onBeforeCompile = (shader: WebGLProgramParametersWithUniforms) => {
+    shader.uniforms.uBeyond = uBeyond;
     shader.uniforms.uTime = winTime;
     shader.uniforms.uLift = uLift;
     shader.uniforms.uBleach = wallBleach;
@@ -908,6 +926,24 @@ function moonTexture(): CanvasTexture {
   return asPixelTex(new CanvasTexture(c));
 }
 
+/** THE FAR SKIN (owner: the whole city on the far horizon): a 64 × 64 tile of 8 × 8 windows on a dark wall, a third of
+ *  them lit — warm or cold, each its own level — the far LOD's map and glow map at once (city-far.ts lays the walls'
+ *  UVs in these tiles). Nearest up close, mipmapped away: at its distance it averages to a lit wall's grain. */
+function farSkinTexture(rand: () => number): CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = 64; c.height = 64;
+  const ctx = c.getContext('2d')!;
+  ctx.fillStyle = '#1a2136'; ctx.fillRect(0, 0, 64, 64);
+  for (let j = 0; j < 8; j++) for (let i = 0; i < 8; i++) {
+    const lit = rand() < 0.34, warm = rand() < 0.6, lv = 0.75 + rand() * 0.25;
+    ctx.fillStyle = lit ? (warm ? `rgb(${Math.round(255 * lv)},${Math.round(215 * lv)},${Math.round(150 * lv)})` : `rgb(${Math.round(185 * lv)},${Math.round(225 * lv)},${Math.round(255 * lv)})`) : '#0b0f1d';
+    ctx.fillRect(i * 8 + 2, j * 8 + 1, 4, 5);
+  }
+  const t = new CanvasTexture(c);
+  t.wrapS = t.wrapT = RepeatWrapping; t.colorSpace = SRGBColorSpace;
+  t.magFilter = NearestFilter; t.minFilter = LinearMipmapLinearFilter;
+  return t;
+}
 /** Dithered pixel clouds; `low` makes the dark silhouette tier that sits
  *  against the horizon glow in the reference. */
 /** Pixel clouds (owner: by day they read as grey slabs): soft rounded puffs — overlapping ellipses with a
@@ -1278,6 +1314,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   const hemi = new HemisphereLight('#4a6ac8', '#5a4030', 0.75); // the fill: the sky above, the streets' sodium bounce below (the look sets it)
   scene.add(hemi);
   const MOON = new Vector3(110, 400, 380); // higher than it was: a low moon laid every street in a tower's shadow
+  const SKY_FAR = 6000; // the sun and the moon stand this far from the eye (owner: by day a glow followed the camera — the sun's disc rode 600 out, before every farther tower); the far plane reaches past them
   const keyDir = MOON.clone().normalize(); // the key light's direction: the moon's, or a look's sun
   const moonLight = new DirectionalLight('#c4d3ff', 0.75); // the key: the moon by night, the sun by day (the look sets it)
   moonLight.castShadow = TIERS[tier].shadows;
@@ -1361,41 +1398,47 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   dim(starsC.material as PointsMaterial, 'stars');
   dim(band.material as PointsMaterial, 'stars');
   const moon = new Sprite(new SpriteMaterial({ map: moonTexture(), transparent: true, fog: false, depthWrite: false }));
-  moon.position.copy(MOON);
-  moon.scale.set(46, 46, 1);
+  moon.position.copy(MOON).multiplyScalar(SKY_FAR / MOON.length());
+  moon.scale.set(46 * SKY_FAR / MOON.length(), 46 * SKY_FAR / MOON.length(), 1);
   sky.add(moon);
   const moonMat = moon.material as SpriteMaterial;
   // the sun: a soft disc at the key's direction, shown by the day looks
   const sun = new Sprite(new SpriteMaterial({ map: glowTexture('#ffffff', true), transparent: true, opacity: 0, fog: false, depthWrite: false }));
   sky.add(sun);
   const sunMat = sun.material as SpriteMaterial;
-  // -- CLOUDS (owner: numerous, higher up, FIXED — not moving with the cursor or the altitude): world objects, not
-  // riders of the camera-borne dome — two hundred and forty flat puffs over a field 2600 across at 300–560 (the dark tier at
-  // 260–340), each its own size and turn, tinted by the look, never drifting; each fades out between 1100 and 1400 from
-  // the eye, well before the far plane (1500), so none pops. (The dome writes no depth and draws first: a cloud past
+  // -- CLOUDS (owner: numerous, higher up, FIXED — not moving with the cursor or the altitude; then the far horizon
+  // always in view): world objects, not riders of the camera-borne dome — about 1,280 flat puffs over a field of
+  // radius 3,000 at 300–560 (the dark tier at 260–340), each its own size and turn, never drifting, merged into one
+  // mesh a texture (eight in all), tinted by the look, FOG-LIT: the far ones dissolve into the beyond as the city does,
+  // nothing fades by its distance from the eye, nothing pops. (The dome writes no depth and draws first: a cloud past
   // its radius still shows.)
-  const clouds: Mesh[] = [];
-  const lowCloud: boolean[] = [];
-  const cloudBase: number[] = []; // each cloud's own opacity
   const cloudTexHigh = [0, 1, 2, 3, 4].map(() => cloudTexture(rand, false)), cloudTexLow = [0, 1, 2].map(() => cloudTexture(rand, true));
-  const cloudGeo = new PlaneGeometry(1, 1).rotateX(-Math.PI / 2); // flat: seen from below
-  const cloudAt = (low: boolean) => {
-    const opacity = low ? 0.95 : 0.88 + rand() * 0.12; // (pixels: near solid)
-    const m = new Mesh(cloudGeo, new MeshBasicMaterial({
-      map: low ? cloudTexLow[Math.floor(rand() * cloudTexLow.length)] : cloudTexHigh[Math.floor(rand() * cloudTexHigh.length)],
-      transparent: true, opacity, fog: false, depthWrite: false, side: DoubleSide,
-    }));
-    const a = rand() * Math.PI * 2, rr = 1300 * Math.sqrt(rand());
-    m.position.set(Math.cos(a) * rr, low ? 260 + rand() * 80 : 300 + rand() * 260, Math.sin(a) * rr);
-    const w = low ? 300 + rand() * 260 : 240 + rand() * 240;
-    m.scale.set(w, 1, w * (0.5 + rand() * 0.25));
-    m.rotation.y = rand() * Math.PI * 2;
-    m.frustumCulled = true;
-    clouds.push(m); lowCloud.push(low); cloudBase.push(opacity);
-    scene.add(m);
-  };
-  for (let i = 0; i < 200; i++) cloudAt(false);
-  for (let i = 0; i < 40; i++) cloudAt(true); // dark slabs against the glow
+  const cloudMats: { m: MeshBasicMaterial; low: boolean }[] = [];
+  {
+    const puffs = [...cloudTexHigh, ...cloudTexLow].map(() => ({ pos: [] as number[], uv: [] as number[], idx: [] as number[], n: 0 }));
+    const puff = (low: boolean) => {
+      const k = low ? cloudTexHigh.length + Math.floor(rand() * cloudTexLow.length) : Math.floor(rand() * cloudTexHigh.length);
+      const a = rand() * Math.PI * 2, rr = 3000 * Math.sqrt(rand());
+      const cx = Math.cos(a) * rr, cy = low ? 260 + rand() * 80 : 300 + rand() * 260, cz = Math.sin(a) * rr;
+      const w = low ? 300 + rand() * 260 : 240 + rand() * 240, dp = w * (0.5 + rand() * 0.25);
+      const yaw = rand() * Math.PI * 2, c = Math.cos(yaw), sn = Math.sin(yaw);
+      const q = puffs[k], b = q.n;
+      for (const [ux, uz, u, v] of [[-0.5, 0.5, 0, 0], [0.5, 0.5, 1, 0], [0.5, -0.5, 1, 1], [-0.5, -0.5, 0, 1]]) { const lx = ux * w, lz = uz * dp; q.pos.push(cx + lx * c + lz * sn, cy, cz - lx * sn + lz * c); q.uv.push(u, v); }
+      q.idx.push(b, b + 1, b + 2, b, b + 2, b + 3); q.n += 4;
+    };
+    for (let i = 0; i < 1070; i++) puff(false);
+    for (let i = 0; i < 210; i++) puff(true); // dark slabs against the glow
+    puffs.forEach((q, k) => {
+      if (!q.n) return;
+      const low = k >= cloudTexHigh.length;
+      const g = new BufferGeometry();
+      g.setAttribute('position', new BufferAttribute(new Float32Array(q.pos), 3)); g.setAttribute('uv', new BufferAttribute(new Float32Array(q.uv), 2)); g.setIndex(q.idx);
+      const m = new MeshBasicMaterial({ map: low ? cloudTexLow[k - cloudTexHigh.length] : cloudTexHigh[k], transparent: true, opacity: low ? 0.95 : 0.92, fog: true, depthWrite: false, side: DoubleSide });
+      const mesh = new Mesh(g, m);
+      mesh.frustumCulled = false;
+      scene.add(mesh); cloudMats.push({ m, low });
+    });
+  }
 
   // (the painted horizon ring — four planes of the far city's glow at 520 — is gone: the endless city's tiles stand there)
 
@@ -1403,7 +1446,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   // the diagonal boulevard; the highway deck ---------------------------------
   const aniso = renderer.capabilities.getMaxAnisotropy();
   const groundTex = groundTextures(rand, aniso);
-  const GROUND = 106 * G; // a whole number of blocks: lot centres land on the tile corners
+  const GROUND = 842 * G; // a whole number of blocks: lot centres land on the tile corners; ±16,000 — to the far-plane fade, its far edge dissolved into the sky's band (owner: the far horizon always in view)
   // (Lambert, not a physical material: a street seen along its length mirrors every point light and the sky's
   // horizon at grazing angles — eighteen lamps' sheen summed to a white veil over the whole frame, measured)
   const groundMat = new MeshLambertMaterial({
@@ -1489,7 +1532,8 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   // THE PLAIN TILES (owner: no boulevard, river or highway outside the border): what a copy may carry at a spot, in the
   // plan's frame — nothing where the arterial or the boulevard ran (their strips are not copied), nothing inside a
   // filler box, nothing high (the footbridges' and gantries' lanterns); and, in the world, nothing in the endless
-  // highway's corridor (the real deck runs on through the tiles)
+  // highway's corridor (the real deck runs on through the tiles; a mass is culled by its footprint, city-plan's
+  // footprintInCorridor, and the corridor is lined by city-plan's corridorFiller)
   const inFiller = (x: number, z: number, margin: number) => plan.filler.some((f) => Math.abs(x - f.x) < f.w / 2 + margin && Math.abs(z - f.z) < f.d / 2 + margin);
   const diagDist = (x: number, z: number) => { const ax = DIAGONAL.x0, az = DIAGONAL.z0, bx = DIAGONAL.x1 - ax, bz = DIAGONAL.z1 - az; const u = Math.max(0, Math.min(1, ((x - ax) * bx + (z - az) * bz) / (bx * bx + bz * bz))); return Math.hypot(x - ax - bx * u, z - az - bz * u); };
   const plainSpot = (x: number, z: number, y = 0) => y < 8 && Math.abs(arterialLat(x, z)) > ARTERIAL_ROW + 1 && diagDist(x, z) > DIAGONAL.width / 2 + 3 && !inFiller(x, z, 0.8);
@@ -1573,32 +1617,23 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
       caps.instanceMatrix.needsUpdate = true; caps.castShadow = true; caps.receiveShadow = true;
       scene.add(caps);
       for (let t = 5; t < st.len; t += 10) for (const s of [-1, 1]) deckLights.push(st.x0 + st.dx * t - st.dz * s * 5, HIGHWAY.y - 0.55, st.z0 + st.dz * t + st.dx * s * 5); // the tubes under the deck
-      { // THE ENDLESS HIGHWAY (owner: "infinite both sides"): the deck runs on past both ends of the built square along its
-        // own line, HW_FAR each way, into the fog — deck, unbroken parapets, edge lights, the tubes, piers with their caps
-        // every 19.2 in the median, the arterial's strip beneath, lamps at the plan's spacings; its traffic is the far
-        // fleet's (below); the tiles' masses are culled from its corridor (the copies)
+      { // THE ENDLESS HIGHWAY (owner: "infinite both sides"; then "vehicles must not vanish at its ends"): the plan's highway
+        // and arterial streets run HW_FAR past each end of the built square, so the deck, its parapets, edge lights and
+        // tubes, and the arterial's strip above are laid along their whole lengths, and the traffic sim drives the
+        // continuation with its own vehicles (populate, below). What the square's plan does not carry that far is added
+        // here: piers with their caps every 19.2 in the median and lamps at the plan's spacings. The tiles' masses are
+        // culled from its corridor and lined along it (the copies).
         const nPier = Math.floor(HW_FAR / 19.2);
         const unit = new BoxGeometry(1, 1, 1), o = new Object3D();
         const farPiers = new InstancedMesh(unit, new MeshLambertMaterial({ color: '#3a3f52' }), 2 * nPier), farCaps = new InstancedMesh(unit, new MeshLambertMaterial({ color: '#4a4f62' }), 2 * nPier);
         let ip = 0;
         for (const end of [-1, 1] as const) {
-          const ax = end > 0 ? st.x0 + st.dx * st.len : st.x0, az = end > 0 ? st.z0 + st.dz * st.len : st.z0; // the deck's end
+          const ax = end > 0 ? HIGHWAY.x1 : HIGHWAY.x0, az = end > 0 ? HIGHWAY.z1 : HIGHWAY.z0; // the square's deck end: the continuation starts here
           const dx = st.dx * end, dz = st.dz * end; // outward
           const at = (t: number, lat: number): [number, number] => [ax + dx * t - dz * lat, az + dz * t + dx * lat];
-          const [mx, mz] = at(HW_FAR / 2, 0);
-          const deckFar = new Mesh(new BoxGeometry(HW_FAR, 0.8, st.width), [deckDark, deckDark, streetMat(deckStrip, HW_FAR / 12), deckDark, deckDark, deckDark]);
-          deckFar.position.set(mx, HIGHWAY.y, mz); deckFar.rotation.y = yawH;
-          scene.add(deckFar);
           for (const side of [-1, 1] as const) {
-            const lat = side * (DECK_KERB + rail / 2);
-            const [wx, wz] = at(HW_FAR / 2, lat);
-            const wall = new Mesh(new BoxGeometry(HW_FAR, 1.1, rail), deckDark);
-            wall.position.set(wx, HIGHWAY.y + 0.95, wz); wall.rotation.y = yawH;
-            scene.add(wall);
-            for (let t = 0; t <= HW_FAR; t += 3) { const [ex, ez] = at(t, lat); edge.push(ex, HIGHWAY.y + 1.6, ez); }
             for (let t = 15; t < HW_FAR; t += 30) { const [lx, lz] = at(t, side * 8.25); farHeads.push(lx, HIGHWAY.y + 1.5 + 5 - 0.3, lz); } // the parapets' lamps (the plan's: five up on the deck, every thirty)
             for (let t = 6; t < HW_FAR; t += 12) { const [lx, lz] = at(t, side * (ARTERIAL_ROW - ARTERIAL.walk + 0.3)); farHeads.push(lx, 5.5 - 0.3, lz); } // the arterial's pavement lamps, every twelve
-            for (let t = 5; t < HW_FAR; t += 10) { const [tx, tz] = at(t, side * 5); deckLights.push(tx, HIGHWAY.y - 0.55, tz); }
           }
           for (let k = 0; k < nPier; k++) {
             const [px, pz] = at(9.6 + k * 19.2, 0);
@@ -1606,7 +1641,6 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
             o.position.set(px, (HIGHWAY.y - 1.8) / 2, pz); o.scale.set(2.2, HIGHWAY.y - 1.8, 2.2); o.updateMatrix(); farPiers.setMatrixAt(ip, o.matrix);
             o.position.set(px, HIGHWAY.y - 1.1, pz); o.scale.set(2.4, 1.4, 14); o.updateMatrix(); farCaps.setMatrixAt(ip++, o.matrix);
           }
-          laidRoad({ ...st, x0: ax, z0: az, dx, dz, len: HW_FAR, y: 0, kind: 'arterial', width: ARTERIAL.w }, 0.05, 2 * ARTERIAL_ROW, arterialStrip, 5); // the arterial beneath, on to the fog
         }
         o.rotation.set(0, 0, 0);
         for (const inst of [farPiers, farCaps]) { inst.instanceMatrix.needsUpdate = true; scene.add(inst); }
@@ -1745,13 +1779,25 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     const tileM = new Matrix4(), tileR = new Matrix4();
     // (the structural darks come too — piers, tanks, legs: anything six up and over a unit across; the kit stays home;
     // a tree or a piece of street kit standing where a filler block goes is dropped; the filler fills what the copies
-    // would show empty — city-plan's fillTiles; nothing stands in the endless highway's corridor)
+    // would show empty — city-plan's fillTiles; nothing stands in the endless highway's corridor: a copy whose footprint
+    // reaches inside the right of way is dropped, and the copies kept line the filler's walk)
     const masses = [...plan.core, ...plan.outer].filter((s) => isMass(s) && !LANDMARK_ARCH.has(s.arch) && !((s.kind === 'tree' || s.arch === 'street') && inFiller(s.x, s.z, 0.5)));
     masses.push(...plan.filler);
+    const kept: { x: number; z: number; w: number; d: number }[] = []; // the copies' footprints in the world, for the corridor's filler
     for (const t of tiles) {
       tileM.makeTranslation(t.dx, 0, t.dz).multiply(tileR.makeRotationY(t.q * Math.PI / 2));
-      for (const s of masses) { const [wx, wz] = tileXZ(t, s.x, s.z); if (inCorridor(wx, wz, Math.max(s.w, s.d) / 2 + 1)) continue; place(s, false, { m: tileM, ring: t.ring, rand: tileRand }); }
+      for (const s of masses) {
+        const [wx, wz] = tileXZ(t, s.x, s.z), sw = t.q % 2 ? s.d : s.w, sd = t.q % 2 ? s.w : s.d; // (a quarter turn swaps a footprint's sides)
+        if (footprintInCorridor(wx, wz, sw, sd)) continue;
+        place(s, false, { m: tileM, ring: t.ring, rand: tileRand });
+        kept.push({ x: wx, z: wz, w: sw, d: sd });
+      }
     }
+    // THE CORRIDOR'S FILLER (owner: the spot outside the border looked ugly): boxes lining the right of way through the
+    // tiles, both sides, both ways, clear of every copy kept and of the square's own rim (city-plan's corridorFiller)
+    const rim = [...plan.core, ...plan.outer].filter((s) => isMass(s) && Math.abs(s.x) > TILE_P / 2 - 60);
+    const one = new Matrix4();
+    for (const s of corridorFiller([...kept, ...rim], tiles.some((t) => t.ring === 2) ? 2 : 1, tileRand)) place(s, false, { m: one, ring: Math.abs(s.x) > TILE_P * 1.5 ? 2 : 1, rand: tileRand });
   }
   const tint = new Color();
   for (const b of buckets.values()) {
@@ -1770,39 +1816,72 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     if (b.tile) tileShow(b.tile, inst); // (ring 1 at every tier, ring 2 from high)
     scene.add(inst);
   }
+  // THE FAR LOD (owner: the whole city on the far horizon, from any height — and always in view, whatever the eye's
+  // place): past the full copies, the rings of tiles to 5,985 carry the square's tall masses as merged boxes
+  // (city-far.ts), one geometry a subset instanced over its tiles by quadrant — eight meshes, each culled as a whole;
+  // a ninth stands in for ring 2 at the tiers that hide the full ring; a phone builds rings 2–4 so beside its full
+  // ring 1. Lambert walls under a generated far skin (8 × 8 windows, a third lit) as map and glow, the roofs the dark
+  // material; fog-lit like everything: the fog of war dissolves them into the sky's band, the haze pass blurs them.
+  const farSkin = farSkinTexture(rand);
+  const farWalls = new MeshLambertMaterial({ map: farSkin, emissiveMap: farSkin, emissive: '#ffffff', emissiveIntensity: 2.2, vertexColors: true, color: '#2a3352' });
+  const lod2: Object3D[] = []; // ring 2's stand-in (applyTier)
+  {
+    const all = [...plan.core, ...plan.outer, ...plan.filler];
+    const lodRand = mulberry32(seed ^ 0xfa215);
+    const geos = new Map<number, BufferGeometry>();
+    const lodGeo = (minH: number) => {
+      let g = geos.get(minH);
+      if (g) return g;
+      const m = mergeBoxes(farMasses(all, minH), lodRand);
+      g = new BufferGeometry();
+      g.setAttribute('position', new BufferAttribute(m.position, 3)); g.setAttribute('normal', new BufferAttribute(m.normal, 3));
+      g.setAttribute('uv', new BufferAttribute(m.uv, 2)); g.setAttribute('color', new BufferAttribute(m.color, 3));
+      g.setIndex(new BufferAttribute(m.index, 1));
+      for (const gr of m.groups) g.addGroup(gr.start, gr.count, gr.materialIndex);
+      geos.set(minH, g);
+      return g;
+    };
+    const lm = new Matrix4(), lr = new Matrix4();
+    const build = (ts: CityTile[], minH: number, standIn = false) => {
+      for (const [qx, qz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+        const quad = ts.filter((t) => (t.dx >= 0 ? 1 : -1) === qx && (t.dz >= 0 ? 1 : -1) === qz);
+        if (!quad.length) continue;
+        const inst = new InstancedMesh(lodGeo(minH), [farWalls, dark], quad.length);
+        quad.forEach((t, j) => { lm.makeTranslation(t.dx, 0, t.dz).multiply(lr.makeRotationY(t.q * Math.PI / 2)); inst.setMatrixAt(j, lm); });
+        inst.instanceMatrix.needsUpdate = true;
+        if (standIn) { inst.visible = tier < 2; lod2.push(inst); }
+        scene.add(inst);
+      }
+    };
+    if (isMobile()) { build(cityTiles(2, 2), 12); build(cityTiles(4, 3), 24); }
+    else { build(cityTiles(2, 2), 12, true); build(cityTiles(4, 3), 12); build(cityTiles(7, 5), 24); }
+  }
   // (owner: no boulevard, river or highway outside the border — the copies carry the grid roads and lanes alone, laid
   // with the city's own further down; the arterial's strip, the boulevard's, the highway's deck and the canal's water
   // are the city's and stop with it. The endless highway is the real one, run on past the square: see its deck above.)
   // THE FAR TRAFFIC (owner: "animate them too, like our city within"; then "at the boundaries the vehicles should match
   // our scale, before gradually turning into small lights, very far away"): the copies' roads and lanes and the endless
-  // highway's lanes carry vehicles, each riding its lane at its lane's speed on the GPU (a start, a phase, a speed: the
-  // vertex shader does the driving, nothing is simulated). In the first ring, and on the endless highway, every vehicle
+  // lanes carry vehicles, each riding its lane at its lane's speed on the GPU (a start, a phase, a speed: the vertex
+  // shader does the driving, nothing is simulated; the endless highway's traffic is the sim's own). In the first ring every vehicle
   // is a BODY of the fleet's own sizes, mix, wraps and colours with a headlight pair at its front and a tail pair at its
   // back; the second ring keeps a single warm head and red tail a vehicle; a phone keeps the lights alone. The bodies
   // shrink with distance while the lights hold their pixel: the change to "small lights" is perspective's, far out.
   const farTime = { value: 0 };
   const farMats: ShaderMaterial[] = [];
   {
-    const OFF: Record<string, number[]> = { road: [1.35, 3.75], highway: [1.4, 3.8, 6.2], arterial: [3.0, 5.4], lane: [1.4] }; // (city-traffic's OFFSETS)
-    const SPD: Record<string, [number, number]> = { road: [12, 17], highway: [24, 31], arterial: [16, 21], lane: [7, 10] }; // units a second
+    const OFF: Record<string, number[]> = { road: [1.35, 3.75], lane: [1.4] }; // (city-traffic's OFFSETS; the endless highway's lanes are the sim's own)
+    const SPD: Record<string, [number, number]> = { road: [4, 6], lane: [3, 4] }; // units a second: the sim's own after its pace (a road car 0.1–0.16 a frame × 0.6 × 60)
     const HEAD = new Color('#fff2d8'), TAIL = new Color('#ff3b2f').multiplyScalar(0.7);
     const BODY = ['#141827', '#1a1f33', '#242a44', '#3a1f2a', '#2a2a30', '#1c2d3a', '#e8e0d0'], TRUCK = ['#3a3f55', '#5a2a2a', '#2a3a4a', '#c9c2b2', '#2f4a3a'];
     const farRand = mulberry32(seed ^ 0x5eed7a);
-    type FarLane = { x0: number; z0: number; dx: number; dz: number; len: number; y: number; kind: string; lat: number; ring: 1 | 2 };
+    type FarLane = { x0: number; z0: number; dx: number; dz: number; len: number; y: number; kind: string; lat: number; ring: number };
     const lanes: FarLane[] = [];
-    const laneOf = (x0: number, z0: number, dx: number, dz: number, len: number, y: number, kind: string, ring: 1 | 2) => { // a lane each side of the axis at each offset, each side's traffic running its own way
+    const laneOf = (x0: number, z0: number, dx: number, dz: number, len: number, y: number, kind: string, ring: number) => { // a lane each side of the axis at each offset, each side's traffic running its own way
       for (const o of OFF[kind]) for (const side of [-1, 1]) lanes.push({ x0: side > 0 ? x0 : x0 + dx * len, z0: side > 0 ? z0 : z0 + dz * len, dx: dx * side, dz: dz * side, len, y, kind, lat: -o, ring });
     };
     for (const t of tiles) for (const st of plan.streets) {
       if ((st.kind !== 'road' && st.kind !== 'lane') || st.len < 30 || st.y1 !== undefined) continue; // (the copies carry the grid alone: no arterial, boulevard or deck)
-      const tst = tileStreet(t, st);
-      laneOf(tst.x0, tst.z0, tst.dx, tst.dz, tst.len, st.y, st.kind, t.ring);
-    }
-    const hw = plan.streets.find((st) => st.kind === 'highway');
-    if (hw) for (const end of [-1, 1]) { // THE ENDLESS HIGHWAY's lanes: the deck's and the arterial's beneath, from each end of the built square out to the fog
-      const ax = end > 0 ? hw.x0 + hw.dx * hw.len : hw.x0, az = end > 0 ? hw.z0 + hw.dz * hw.len : hw.z0;
-      laneOf(ax, az, hw.dx * end, hw.dz * end, HW_FAR, hw.y, 'highway', 1);
-      laneOf(ax, az, hw.dx * end, hw.dz * end, HW_FAR, 0, 'arterial', 1);
+      for (const p of cutAtCorridor(tileStreet(t, st))) if (p.len >= 30) laneOf(p.x0, p.z0, p.dx, p.dz, p.len, st.y, st.kind, t.ring); // (cut at the corridor: the strips' own pieces)
     }
     const bodies = !isMobile();
     for (const ring of [1, 2] as const) {
@@ -1873,6 +1952,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
         transparent: true, depthWrite: false, blending: AdditiveBlending, fog: true,
       });
       mat.uniforms.uTime = farTime; // (merge clones its uniforms: the clock is shared by hand)
+      mat.uniforms.uBeyond = uBeyond; // (and the beyond's colour)
       farMats.push(mat);
       const pts = new Points(g, mat);
       pts.frustumCulled = false; // (the vehicles drive the length of their streets: no static bounds hold them)
@@ -1881,6 +1961,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
         const wrap = carTextures();
         const patch = (m: MeshLambertMaterial) => {
           m.onBeforeCompile = (shader: WebGLProgramParametersWithUniforms) => {
+            shader.uniforms.uBeyond = uBeyond;
             shader.uniforms.uTime = farTime;
             shader.vertexShader = shader.vertexShader
               .replace('#include <common>', '#include <common>\n attribute float aLen; attribute float aPhase; attribute float aSpeed; uniform float uTime;')
@@ -2589,6 +2670,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     const atlas = billboardAtlas(rand);
     const billMat = new MeshBasicMaterial({ map: atlas, side: DoubleSide });
     billMat.onBeforeCompile = (shader: WebGLProgramParametersWithUniforms) => {
+      shader.uniforms.uBeyond = uBeyond;
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', '#include <common>\n attribute float aArt;')
         .replace('#include <uv_vertex>', `vMapUv = ( uv + vec2( mod( aArt, 6.0 ), ${Math.ceil(ARTS / 6) - 1}.0 - floor( aArt / 6.0 ) ) ) / vec2( 6.0, ${Math.ceil(ARTS / 6)}.0 );`);
@@ -2955,11 +3037,17 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   // canal; pedestrians on the pavements and in the alleys; birds; aircraft ----
   const traffic = new Traffic(plan.streets, mulberry32(seed ^ 0x51f15e));
   const inCore = (x: number, z: number) => Math.abs(x) < EXT + G && Math.abs(z) < EXT + G;
-  traffic.populate(calm ? 900 : isMobile() ? 800 : 2000, (lane) => { // (owner: more ground vehicles — the flow test holds at two thousand)
+  // the endless highway's and its arterial's links past the built square — the continuation (owner: vehicles must not
+  // vanish at the highway's ends): the sim owns it (city-plan's streets run HW_FAR past each end), with vehicles of its
+  // own on top of the city's, one every 45 lane-units (the far fleet's density), portalled only at the far ends in the fog
+  const onContinuation = (lane: { link: { street: Street; t0: number; t1: number } }) => { const st = lane.link.street; if (st.kind !== 'highway' && st.kind !== 'arterial') return false; const t = (lane.link.t0 + lane.link.t1) / 2; return Math.abs(st.x0 + st.dx * t) > EXT + G; };
+  traffic.populate(calm ? 900 : isMobile() ? 550 : 2000, (lane) => { // (owner: more ground vehicles — the flow test holds at two thousand; a phone carries fewer)
+    if (onContinuation(lane)) return 0;
     const st = lane.link.street;
     const t = (lane.link.t0 + lane.link.t1) / 2;
     return lane.len * (inCore(st.x0 + st.dx * t, st.z0 + st.dz * t) ? 3 : 0.9) * (st.kind === 'highway' ? 2.2 : st.kind === 'arterial' ? 2.5 : 1);
   });
+  traffic.populate(calm ? 300 : isMobile() ? 260 : 700, (lane) => (onContinuation(lane) ? lane.len : 0)); // the continuation's own
   const cars = traffic.cars;
   const canal = plan.streets.find((s) => s.kind === 'canal')!;
   interface Boat { lane: number; t: number; v: number }
@@ -3217,7 +3305,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     for (const ring of [1, 2] as const) { // THE ENDLESS CITY'S grid roads and lanes: the same strips through the tiles, one merged mesh per axis a ring (no node trims them there: they run through)
       const ts = tiles.filter((t) => t.ring === ring);
       if (!ts.length) continue;
-      const copies = (list: Street[]) => ts.flatMap((t) => list.map((st) => tileStreet(t, st)));
+      const copies = (list: Street[]) => ts.flatMap((t) => list.flatMap((st) => cutAtCorridor(tileStreet(t, st)))); // (cut at the endless highway's corridor: the pieces end at its building line)
       const tr = copies(roads), tl = copies(lanes);
       for (const m of [layStrips(tr.filter((st) => st.dz === 0), 0.044, STREET, roadStripTex, 0), layStrips(tr.filter((st) => st.dz !== 0), 0.046, STREET, roadStripTex, 1), layStrips(tl.filter((st) => st.dz === 0), 0.048, LANE_W, laneStripTex, 2), layStrips(tl.filter((st) => st.dz !== 0), 0.048, LANE_W, laneStripTex, 3)]) if (m) tileShow(ring, m);
     }
@@ -3336,7 +3424,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     const st = axis === 'd' ? n.streets.find((q) => q.kind === 'diagonal') : n.streets.find((q) => q.kind !== 'diagonal' && (axis === 'x') === (q.dx !== 0));
     return st ? traffic.walk(n, Math.max(0, n.streets.indexOf(st)), frames) : 'unlit';
   };
-  const people = new People(plan.streets, zones, plan.stalls, mulberry32(seed ^ 0x7e0b1e), calm ? 1400 : isMobile() ? 1500 : 3800, crossOK, crossNodes, { // (owner: a city crowded with pedestrians)
+  const people = new People(plan.streets, zones, plan.stalls, mulberry32(seed ^ 0x7e0b1e), calm ? 1400 : isMobile() ? 900 : 3800, crossOK, crossNodes, { // (owner: a city crowded with pedestrians)
     solid: (x, y, z) => plan.grid.hit(x, y, z, 0.3) !== null,
     onRoad: (x, z) => carriagewayAt(plan.streets, x, z) !== null,
     roadClear: (x, z) => traffic.clearAt(x, z),
@@ -3408,6 +3496,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   // map, the alpha test and the fog are three's own
   const peopleMat = new MeshBasicMaterial({ map: peopleTexture(), alphaTest: 0.5, color: '#b4b4be', fog: true }); // the dim: under the bloom's threshold
   peopleMat.onBeforeCompile = (shader: WebGLProgramParametersWithUniforms) => {
+    shader.uniforms.uBeyond = uBeyond;
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>
         attribute vec3 aPos; attribute float aFrame; attribute float aYaw; attribute float aRow; attribute float aScale;
@@ -3451,7 +3540,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   scene.add(peopleMesh);
   // PARKOUR (owner): a hundred and fifty runners on the roofs (city-runners), drawn as the walkers are — hip-hop looks: a neon top,
   // dark trousers, a cap, a glow for the thrusters' flame — and their sparks as points
-  const runners = new Runners(plan.roofs, plan.grid, mulberry32(seed ^ 0x9a7c0a), isMobile() ? 120 : 150); // (owner: massively more runners, then "down to 150")
+  const runners = new Runners(plan.roofs, plan.grid, mulberry32(seed ^ 0x9a7c0a), isMobile() ? 70 : 150); // (owner: massively more runners, then "down to 150"; a phone seventy)
   const RUNNERS = runners.runners.length;
   const rPos = new Float32Array(RUNNERS * 3), rFrame = new Float32Array(RUNNERS), rYaw = new Float32Array(RUNNERS), rRow = new Float32Array(RUNNERS), rScale = new Float32Array(RUNNERS);
   const rTop = new Float32Array(RUNNERS * 3), rBot = new Float32Array(RUNNERS * 3), rHair = new Float32Array(RUNNERS * 3), rSkin = new Float32Array(RUNNERS * 3), rGlow = new Float32Array(RUNNERS * 3);
@@ -3598,12 +3687,13 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     pad: null, stage: 'in', timer: 0, from: new Vector3(), to: new Vector3(),
   });
   const mobileAir = isMobile() ? 0.5 : 1;
+  const AIR_PACE = 0.6; // (owner: traffic 40 % slower — the flyers too)
   plan.air.forEach((lane, li) => {
     const n = Math.max(1, Math.round((lane.kind === 'patrol' ? 1 : lane.kind === 'ring' ? 14 : lane.kind === 'canyon' ? 7 : lane.kind === 'arc' ? 9 : 10) * mobileAir));
     for (let i = 0; i < n; i++) {
       const fl = flyer(lane, kindFor(lane));
       fl.s = (i / n) * laneLen[li][laneLen[li].length - 1];
-      fl.v = lane.speed * (0.85 + rand() * 0.3) * AIR[fl.kind].pace;
+      fl.v = lane.speed * (0.85 + rand() * 0.3) * AIR[fl.kind].pace * AIR_PACE;
       flyers.push(fl);
     }
   });
@@ -3740,6 +3830,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   let sm = 0;
   let tick = 0;
   let bank = 0;
+  let autoRamp = 0; // AUTO's ease-in: the flight's pace and the pan's ceilings rise from a tenth to full over 150 frames (owner: no sudden movement at the start)
   const keys = new Set<string>();
   // the free rig: position and velocity, a head with momentum, a throttle
   // that builds, a roll that leans into turns and strafes
@@ -3749,6 +3840,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   };
   // the auto rig's eye: a critically damped pan with a ceiling on its rate
   const cam = { yaw: 0, pitch: 0, yawV: 0, pitchV: 0 };
+  let fscale = 1; // the frame's advance for the rigs, in steps (city-clock's frameScale; the loop sets it)
   const pos = new Vector3();
   const look = new Vector3();
   const fwd = new Vector3();
@@ -3787,11 +3879,12 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   const applyFree = () => {
     // the head: a drag is an impulse on a velocity that decays — the look
     // has momentum, it settles rather than stops (owner: not a spectator cam)
-    free.yawV = free.yawV * 0.8 - free.lookX * 0.00068;
-    free.pitchV = free.pitchV * 0.8 - free.lookY * 0.00068;
+    const decay = Math.pow(0.8, fscale); // (by the frame's real time, city-clock's frameScale: the same feel at any rate)
+    free.yawV = free.yawV * decay - free.lookX * 0.00068;
+    free.pitchV = free.pitchV * decay - free.lookY * 0.00068;
     free.lookX = 0; free.lookY = 0;
-    free.yaw += free.yawV;
-    free.pitch = clamp(free.pitch + free.pitchV, -1.35, 1.35);
+    free.yaw += free.yawV * fscale;
+    free.pitch = clamp(free.pitch + free.pitchV * fscale, -1.35, 1.35);
     fwd.set(Math.sin(free.yaw) * Math.cos(free.pitch), Math.sin(free.pitch), Math.cos(free.yaw) * Math.cos(free.pitch));
     side.set(fwd.z, 0, -fwd.x).normalize();
     // the intent, in the rig's frame
@@ -3810,12 +3903,12 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     const push = Math.min(1, want.length()); // a half-pushed stick is a half-throttle
     // the throttle builds while a key is held and bleeds off when released;
     // the velocity chases the intent, and glides to rest without it
-    free.throttle = driving ? Math.min(1, free.throttle + 0.02) : Math.max(0, free.throttle - 0.03);
+    free.throttle = driving ? Math.min(1, free.throttle + 0.02 * fscale) : Math.max(0, free.throttle - 0.03 * fscale);
     const boost = keys.has('shift') ? 2.4 : 1;
     const speed = 1.05 * boost * push * (0.25 + 0.75 * free.throttle * free.throttle);
-    if (driving) free.vel.lerp(want.normalize().multiplyScalar(speed), 0.07);
-    else free.vel.multiplyScalar(0.94);
-    meant.copy(free.pos).add(free.vel);
+    if (driving) free.vel.lerp(want.normalize().multiplyScalar(speed), 1 - Math.pow(0.93, fscale));
+    else free.vel.multiplyScalar(Math.pow(0.94, fscale));
+    meant.copy(free.pos).addScaledVector(free.vel, fscale);
     free.pos.copy(meant);
     free.pos.y = clamp(free.pos.y, 2, 220);
     free.pos.x = clamp(free.pos.x, -BOUND, BOUND);
@@ -3827,7 +3920,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     if (Math.abs(free.pos.z - meant.z) > 1e-6) free.vel.z = 0;
     // the lean: into the turn, into the strafe
     const rollTo = clamp(-free.yawV * 9 - strafe * 0.05 * free.throttle, -0.2, 0.2);
-    free.roll += (rollTo - free.roll) * 0.08;
+    free.roll += (rollTo - free.roll) * (1 - Math.pow(0.92, fscale));
     camera.position.copy(free.pos);
     camera.lookAt(free.pos.x + fwd.x, free.pos.y + fwd.y, free.pos.z + fwd.z);
     camera.rotateZ(free.roll);
@@ -3850,12 +3943,14 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     if (mode === 'free') {
       applyFree();
     } else if (mode === 'auto' && flight) {
-      flight.step(calm ? 0.11 : 0.18, pos, look); // (owner: zen — a third slower)
-      if (!bodied) { body.copy(pos); bodied = true; } else body.lerp(pos, 0.1); // the body rounds every knot
+      autoRamp = Math.min(1, autoRamp + fscale / 150);
+      const ramp = 0.1 + 0.9 * ease(autoRamp);
+      flight.step((calm ? 0.11 : 0.18) * ramp * fscale, pos, look); // (owner: zen — a third slower; by the frame's real time, city-clock's frameScale)
+      if (!bodied) { body.copy(pos); bodied = true; } else body.lerp(pos, 1 - Math.pow(0.9, fscale)); // the body rounds every knot
       plan.grid.resolve(body, CAM_R);
       camera.position.copy(body);
       if (flight.legId !== gaze.leg) { gaze.leg = flight.legId; chooseGaze(flight.phase); }
-      gaze.held += 1;
+      gaze.held += fscale;
       // the eye: an orbit's centre; else the chosen subject while it stays
       // ahead; else the path ahead (and down the street in a canyon)
       const focus = flight.focus;
@@ -3870,21 +3965,21 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
       else gaze.want.copy(look).setY(look.y - (flight.phase === 'canyon' ? 4 : 0));
       // the eye's target slews (a subject chosen or let go is a glide, never a step), then a critically damped pan
       // with a low ceiling on its rate — 12°/s of yaw, 8°/s of pitch (owner: zen, a cup of coffee)
-      if (!gaze.aimed) { gaze.aim.copy(gaze.want); gaze.aimed = true; } else gaze.aim.lerp(gaze.want, 0.012);
+      if (!gaze.aimed) { gaze.aim.copy(gaze.want); gaze.aimed = true; } else gaze.aim.lerp(gaze.want, 1 - Math.pow(0.988, fscale));
       const dx = gaze.aim.x - body.x, dy = gaze.aim.y - body.y, dz = gaze.aim.z - body.z;
       const ey = wrap(Math.atan2(dx, dz) - cam.yaw);
       const ep = Math.atan2(dy, Math.hypot(dx, dz)) - cam.pitch;
-      cam.yawV = clamp(cam.yawV + ey * 0.00045 - cam.yawV * 0.042, -0.0035, 0.0035);
-      cam.pitchV = clamp(cam.pitchV + ep * 0.00045 - cam.pitchV * 0.042, -0.0025, 0.0025);
-      cam.yaw += cam.yawV;
-      cam.pitch = clamp(cam.pitch + cam.pitchV, -1.2, 1.2);
+      cam.yawV = clamp(cam.yawV + (ey * 0.00045 - cam.yawV * 0.042) * fscale, -0.0035 * ramp, 0.0035 * ramp);
+      cam.pitchV = clamp(cam.pitchV + (ep * 0.00045 - cam.pitchV * 0.042) * fscale, -0.0025 * ramp, 0.0025 * ramp);
+      cam.yaw += cam.yawV * fscale;
+      cam.pitch = clamp(cam.pitch + cam.pitchV * fscale, -1.2, 1.2);
       fwd.set(Math.sin(cam.yaw) * Math.cos(cam.pitch), Math.sin(cam.pitch), Math.cos(cam.yaw) * Math.cos(cam.pitch));
       camera.lookAt(body.x + fwd.x, body.y + fwd.y, body.z + fwd.z);
       // the faintest bank into the pans, and the slow breath of a handheld rig
-      bank += (clamp(-cam.yawV * 14, -0.05, 0.05) - bank) * 0.03;
+      bank += (clamp(-cam.yawV * 14, -0.05, 0.05) - bank) * (1 - Math.pow(0.97, fscale));
       camera.rotateZ(bank + (calm ? 0 : Math.sin(tick * 0.011) * 0.003));
     } else {
-      sm += (target - sm) * (calm ? 0.16 : 0.07);
+      sm += (target - sm) * (1 - Math.pow(1 - (calm ? 0.16 : 0.07), fscale));
       const t = Math.min(0.999, Math.max(0, sm)) * 0.985;
       route.getPointAt(t, pos);
       route.getPointAt(Math.min(0.999, t + 0.012), look);
@@ -4051,6 +4146,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   };
   let timeNow: TimeOfDay = 'night';
   let lookFrom: SkyLook = SKY.night, lookTo: SkyLook = SKY.night, lookNow: SkyLook = SKY.night, lookT = 1;
+  const setBeyond = (k: number) => uBeyond.value.set(lerpHex(horizonColor(lookFrom), horizonColor(lookTo), k)); // the beyond's colour crossfades with the dome
   const applyLook = (L: SkyLook) => {
     keyDir.set(L.key.dir[0], L.key.dir[1], L.key.dir[2]).normalize();
     moonLight.color.set(L.key.color); moonLight.intensity = L.key.intensity;
@@ -4059,6 +4155,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     renderer.toneMappingExposure = L.exposure;
     bloom.threshold = L.bloom;
     wallLit.value = Math.min(1, L.windows * 1.15);
+    farWalls.color.set(lerpHex('#2a3352', L.bleach.color, L.bleach.amount)); farWalls.emissiveIntensity = 2.2 * L.windows; // the far LOD's walls go with the look
     for (const m of skinMats) {
       m.emissiveIntensity = (m.userData.base as number) * L.windows;
       (m.userData.uLift as { value: number }).value = Math.max(1, (m.userData.lift as number) * L.walls);
@@ -4084,9 +4181,9 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     for (const sc of scalables) sc.m.color.setScalar(sc.floor + (1 - sc.floor) * L.lamps);
     moonMat.opacity = L.moon;
     sunMat.opacity = L.sun.opacity; sunMat.color.set(L.sun.color);
-    sun.scale.set(L.sun.size, L.sun.size, 1);
-    sun.position.copy(keyDir).multiplyScalar(600);
-    clouds.forEach((c, i) => (c.material as MeshBasicMaterial).color.set(lowCloud[i] ? L.clouds.low : L.clouds.high));
+    sun.scale.set(L.sun.size * SKY_FAR / 600, L.sun.size * SKY_FAR / 600, 1);
+    sun.position.copy(keyDir).multiplyScalar(SKY_FAR);
+    for (const c of cloudMats) c.m.color.set(c.low ? L.clouds.low : L.clouds.high);
     waterMat.color.set(L.water);
     peopleMat.color.setScalar(L.people);
     lens.setGrade(L.grade.low, L.grade.high, L.grade.contrast);
@@ -4102,7 +4199,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     const b = domeB.material as MeshBasicMaterial;
     b.map?.dispose(); b.map = skyTex(lookTo); b.needsUpdate = true; b.opacity = 0; domeB.visible = true;
     setEnvironment(lookTo);
-    if (instant) { finishDome(); lookNow = lookTo; applyLook(lookNow); }
+    if (instant) { finishDome(); lookNow = lookTo; applyLook(lookNow); setBeyond(1); }
   };
   const tendLook = () => {
     if (lookT >= 1) return;
@@ -4110,11 +4207,13 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     const k = ease(lookT);
     lookNow = blendLooks(lookFrom, lookTo, k);
     (domeB.material as MeshBasicMaterial).opacity = k;
+    setBeyond(k);
     applyLook(lookNow);
     if (lookT >= 1) { finishDome(); lookNow = lookTo; }
   };
   setEnvironment(SKY.night);
   applyLook(lookNow);
+  setBeyond(1);
 
   const fit = () => {
     const w = Math.max(1, canvas.clientWidth);
@@ -4152,13 +4251,6 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     (starsB.material as PointsMaterial).opacity = (0.55 + Math.cos(tick * 0.033) * 0.35) * starLevel;
     for (let i = 0; i < beacons.length; i++) {
       (beacons[i].material as SpriteMaterial).opacity = ((tick >> 4) + i) % 2 ? 0.95 : 0.12;
-    }
-    for (let i = 0; i < clouds.length; i++) { // the clouds HOLD; each fades before the far plane
-      const c = clouds[i];
-      const d = c.position.distanceTo(camera.position);
-      const f = d < 1100 ? 1 : d > 1400 ? 0 : (1400 - d) / 300;
-      c.visible = f > 0.02;
-      if (c.visible) (c.material as MeshBasicMaterial).opacity = cloudBase[i] * f;
     }
     if (tick % 6 === 0) {
       for (const s of screens) { paintScreen(s.ctx, rand); s.tex.needsUpdate = true; }
@@ -4219,12 +4311,16 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     shadowPrimed = false; // the tier's maps are new: render them once even under a look that shows no shadow
     if (PIX !== pixOf(tier)) { PIX = pixOf(tier); fit(); }
     for (const ring of [1, 2]) for (const m of tileMeshes[ring]) m.visible = ring === 1 || tier >= 2; // the endless city's rings
+    for (const m of lod2) m.visible = tier < 2; // (ring 2's far stand-in while the full ring is hidden)
     refreshMaterials();
   };
   // the frame clock: long frames step the tier down, short ones (for a
   // while) step it back up; the first seconds and hidden tabs don't count
   let lastFrame = performance.now();
   let frames = 0, spent = 0;
+  // THE WORLD'S CLOCK (owner: slow motion and lag on a phone; city-clock.ts): the sims step at 60 Hz by an accumulator
+  // of real time, at most three steps a frame and at most what a step's cost allows; the rigs advance by the frame
+  let acc = 0, stepCost = 0;
   let lastChange = performance.now() + 3000;
   let ceiling = TIERS.length - 1; // a tier that ran long is closed for the session (the ladder used to climb back into it every dozen seconds)
   const loop = () => {
@@ -4232,7 +4328,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     const now = performance.now();
     const dt = now - lastFrame;
     lastFrame = now;
-    if (document.hidden) return;
+    if (document.hidden) { acc = 0; return; }
     if (now > lastChange && dt < 250) {
       spent += dt; frames += 1;
       if (frames >= 90) {
@@ -4242,7 +4338,10 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
         else if (avg < 11.5 && tier < ceiling && now - lastChange > 12000) { tier += 1; applyTier(); lastChange = now + 2000; }
       }
     }
-    tickWorld();
+    acc = owed(acc, dt);
+    const steps = stepsAllowed(acc, stepCost);
+    if (steps) { const t0 = performance.now(); for (let i = 0; i < steps; i++) tickWorld(); stepCost = (performance.now() - t0) / steps; acc -= steps * STEP; }
+    fscale = frameScale(dt);
     if (mode !== 'tour' || !calm || tick % 2 === 0 || Math.abs(target - sm) > 0.0004) render(); // (calm: the tour at half rate, never still)
   };
   loop();
@@ -4267,6 +4366,11 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
         cam.pitch = Math.asin(Math.max(-0.99, Math.min(0.99, fwd.y)));
         cam.yawV = 0; cam.pitchV = 0;
         bank = 0;
+        // (owner: no teleport at the start) the body is re-seated on the camera — it used to keep the LAST flight's final
+        // place and glide across the city from there — the eye's aim is the camera's own look point, the pace ramps in
+        bodied = false;
+        gaze.aim.copy(camera.position).addScaledVector(fwd, 30); gaze.aimed = true;
+        autoRamp = 0;
         flight = new AutoFlight(plan.grid, mulberry32((Math.random() * 2 ** 32) >>> 0), camera.position, cam.yaw, plan.roomAhead, plan.pois);
         gaze.leg = -1; gaze.poi = null; gaze.held = 0;
       }

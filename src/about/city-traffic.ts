@@ -33,6 +33,9 @@ export const DECK_KERB = 8;
 /** Lane centres from a street's axis: 2.4 apart, the widest vehicle (a bus, 2.3) fitting inside its lane. */
 export const OFFSETS: Record<string, number[]> = { road: [1.35, 3.75], diagonal: [1.35, 3.75], highway: [1.4, 3.8, 6.2], ramp: [0], arterial: [3.0, 5.4], lane: [1.4] }; // (the arterial's median holds the deck's piers; a lane is one each way)
 const SPEED: Record<string, number> = { highway: 1.9, ramp: 1.3, arterial: 1.25, lane: 0.6 };
+/** THE PACE (owner: traffic 40 % slower): every link speed is scaled by this; the signals keep their timings (a box
+ *  still busy holds the next green). */
+export const PACE = 0.6;
 export const GREEN = 420; // (owner: a pedestrian phase — a 14-second cycle left no walk window against a 6-second crossing)
 export const CLEAR = 130; // all red: whoever is in the box gets out
 export const PHASE = GREEN + CLEAR; // one street's turn; a node cycles through as many phases as it has streets
@@ -238,7 +241,7 @@ export class Traffic {
         if (c.t - prev.t < 1 || c.node === prev.node) continue;
         const link: Link = {
           id: this.links.length, street: st, t0: prev.t, t1: c.t, len: c.t - prev.t, a: prev.node, b: c.node,
-          lanes: [[], []], speed: SPEED[st.kind] ?? 1,
+          lanes: [[], []], speed: (SPEED[st.kind] ?? 1) * PACE,
         };
         this.links.push(link);
         for (const [n, end] of [[link.a, 0], [link.b, 1]] as [Node, 0 | 1][]) {

@@ -14,7 +14,7 @@ class SoundEngine {
     // v2 key: the pre-rewrite engine was near-inaudible, so a stored 'off'
     // from that era usually captured frustration, not intent. The new engine
     // starts from its own key — everyone defaults to sound ON once; anyone
-    // who truly wants silence flips SND again and v2 remembers it.
+    // who truly wants silence flips SFX again and v2 remembers it.
     try { this.enabled = localStorage.getItem('rvl-sound-v2') !== 'off'; } catch { /* private mode */ }
   }
 

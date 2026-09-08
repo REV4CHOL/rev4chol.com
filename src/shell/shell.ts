@@ -61,7 +61,7 @@ export function mountShell(site: SiteContent, active: PageKey): ShellRefs {
   sound.init();
   // MUSIC (owner): started in page.ts ahead of the boot screen; a cold load plays at the first gesture, wired here.
   // (The ambient room tone is gone: owner.)
-  for (const ev of ['pointerdown', 'keydown', 'touchend']) document.addEventListener(ev, () => music.gesture(), { passive: true });
+  for (const ev of ['pointerdown', 'pointerup', 'click', 'keydown', 'touchend']) document.addEventListener(ev, () => music.gesture(), { passive: true }); // (pointerup, click: iOS grants sound inside these, not a pointerdown)
   document.addEventListener('pointerover', (e) => {
     if ((e.target as Element).closest?.('a, button')) sound.hover();
   });

@@ -540,25 +540,84 @@ export function fillTiles(masses: Solid[], seed: number): Solid[] {
   return out;
 }
 
-interface Rect { x: number; z: number; w: number; d: number }
+/** THE CORRIDOR THROUGH THE TILES (owner: "that spot outside the border — the road looks too ugly"): the endless
+ *  highway and the arterial under it run on through the copies in their right of way (ARTERIAL_ROW each side of the
+ *  axis, arterialLat's frame). What the tiles carry is culled from it by footprint (footprintInCorridor), the copied
+ *  streets stop at its building line (cutAtCorridor), and its sides are lined with plain boxes (corridorFiller) — the
+ *  arterial through the tiles is lined like the arterial inside. */
+const corridorFrame = () => {
+  const hx = HIGHWAY.x1 - HIGHWAY.x0, hz = HIGHWAY.z1 - HIGHWAY.z0, L = Math.hypot(hx, hz);
+  return { ux: hx / L, uz: hz / L, nx: -hz / L, nz: hx / L }; // along the axis; its left normal (arterialLat's sign)
+};
+/** Whether an axis-aligned footprint in the world reaches inside the right of way widened by `reach`. */
+export function footprintInCorridor(x: number, z: number, w: number, d: number, reach = 0.5): boolean {
+  const f = corridorFrame();
+  return Math.abs(arterialLat(x, z)) < ARTERIAL_ROW + reach + (w / 2) * Math.abs(f.nx) + (d / 2) * Math.abs(f.nz);
+}
+/** A copied street cut at the corridor: the pieces outside the right of way widened by `reach`, each ending where its
+ *  whole width is clear of it (its centre line at ROW + reach + half its width's reach across the corridor); a piece
+ *  under four long is dropped; a street lying along the corridor is laid whole outside it, or not at all. */
+export function cutAtCorridor(st: Street, reach = 1): Street[] {
+  const f = corridorFrame();
+  const sin = st.dx * f.nx + st.dz * f.nz, cos = st.dx * f.ux + st.dz * f.uz; // the street's rate across the corridor, and along it
+  const lat0 = arterialLat(st.x0, st.z0), row = ARTERIAL_ROW + reach + (st.width / 2) * Math.abs(cos);
+  if (Math.abs(sin) < 1e-3) return Math.abs(lat0) >= row ? [st] : [];
+  const a = (-row - lat0) / sin, b = (row - lat0) / sin, c0 = Math.min(a, b), c1 = Math.max(a, b);
+  if (c1 <= 0 || c0 >= st.len) return [st];
+  const out: Street[] = [];
+  if (c0 >= 4) out.push({ ...st, len: c0 });
+  if (st.len - c1 >= 4) out.push({ ...st, x0: st.x0 + st.dx * c1, z0: st.z0 + st.dz * c1, len: st.len - c1 });
+  return out;
+}
+/** The corridor's filler: boxes lining both sides of the right of way through the tiles, from the square's edge to
+ *  the tiles' (both ways), their inner face on the building line (ROW + 0.8), 9–20 along, 8–14 deep, 10–30 high with
+ *  a spike now and then to 40, turned to the corridor's angle (rotY), gap-free but where a kept mass stands: a box
+ *  goes only where its footprint clears every `kept` footprint (an AABB test in the world), else the walk steps on by
+ *  one and tries again. Plain facades, the tiles' skins; the rings are the renderer's, by |x|. Its own stream. */
+export function corridorFiller(kept: Rect[], rings: 1 | 2, rand: () => number): Solid[] {
+  const f = corridorFrame(), yaw = Math.atan2(-f.uz, f.ux), ca = Math.abs(Math.cos(yaw)), sa = Math.abs(Math.sin(yaw));
+  const near = kept.filter((k) => Math.abs(arterialLat(k.x, k.z)) < ARTERIAL_ROW + 40);
+  const tAt = (x: number) => (x - HIGHWAY.x0) / f.ux; // the axis's parameter at a longitude
+  const edge = TILE_P / 2, far = edge + rings * TILE_P;
+  const out: Solid[] = [];
+  for (const [t0, t1] of [[tAt(-far), tAt(-edge)], [tAt(edge), tAt(far)]]) for (const side of [-1, 1]) {
+    let t = t0;
+    while (t < t1) {
+      const along = Math.min(9 + rand() * 11, t1 - t), deep = 8 + rand() * 6;
+      if (along < 4) break;
+      let h = 10 + Math.pow(rand(), 1.3) * 20;
+      if (rand() < 0.12) h = Math.min(40, h * 1.5); // the odd spike
+      const lat = side * (ARTERIAL_ROW + 0.8 + deep / 2), tc = t + along / 2;
+      const x = HIGHWAY.x0 + f.ux * tc + f.nx * lat, z = HIGHWAY.z0 + f.uz * tc + f.nz * lat;
+      const ex = (along / 2) * ca + (deep / 2) * sa, ez = (along / 2) * sa + (deep / 2) * ca; // the turned box's bounds
+      if (near.some((k) => Math.abs(x - k.x) < ex + k.w / 2 - 0.2 && Math.abs(z - k.z) < ez + k.d / 2 - 0.2)) { t += 1; continue; }
+      out.push({ kind: 'facade', arch: 'sprawl', tex: Math.floor(rand() * 18), x, y: h / 2, z, w: along, h, d: deep, rotY: yaw });
+      t += along;
+    }
+  }
+  return out;
+}
+
+export interface Rect { x: number; z: number; w: number; d: number }
 
 /** THE ENDLESS CITY (owner: "beyond boundaries, make the illusion of the city spanning infinite, like a mega massive
  *  city — it has to look like our current city"): the built square (core and outer ring, ±399, 21 blocks) is copied
  *  into rings of TILES about it — its period the square's span, each tile turned a quarter turn or three by its
  *  coordinates so the landmarks' pattern never repeats in step. The streets continue across the seams: the grid is
  *  symmetric under a quarter turn and periodic in 21 blocks, and the seam lies down the middle of a shared street.
- *  Ring 1 is the eight tiles about the square; ring 2 the sixteen about those, whose near edges (1197) lie inside the
- *  far plane (1500) and whose far edges the fog owns. The renderer places the masses (not the kit, not the trees, not
- *  the unique landmarks) with the city's own materials, no shadows, ring 1 at every tier and ring 2 from high. */
+ *  Ring 1 is the eight tiles about the square; ring 2 the sixteen about those (near edges 1197). The renderer places
+ *  the masses (not the kit, not the trees, not the unique landmarks) with the city's own materials, no shadows, ring 1
+ *  at every tier and ring 2 from high; rings 3–7 (to 5,985) are the far LOD's, merged boxes of the tall masses
+ *  (city-far.ts) — the whole city on the far horizon from any height. */
 export const TILE_P = (2 * (HALF + OUTER) + 1) * G;
-export interface CityTile { dx: number; dz: number; q: number; ring: 1 | 2 }
-/** The tiles of the first `rings` rings about the built square: their offsets and their quarter turns. */
-export function cityTiles(rings: 1 | 2): CityTile[] {
+export interface CityTile { dx: number; dz: number; q: number; ring: number }
+/** The tiles of rings `from` to `rings` about the built square: their offsets and their quarter turns. */
+export function cityTiles(rings: number, from = 1): CityTile[] {
   const out: CityTile[] = [];
   for (let i = -rings; i <= rings; i++) for (let j = -rings; j <= rings; j++) {
     const ring = Math.max(Math.abs(i), Math.abs(j));
-    if (ring === 0) continue;
-    out.push({ dx: i * TILE_P, dz: j * TILE_P, q: (((i * 3 + j * 5) % 4) + 4) % 4, ring: ring as 1 | 2 });
+    if (ring < from) continue;
+    out.push({ dx: i * TILE_P, dz: j * TILE_P, q: (((i * 3 + j * 5) % 4) + 4) % 4, ring });
   }
   return out;
 }
@@ -2212,7 +2271,11 @@ export function planCity(seed: number): Plan {
     const hx = HIGHWAY.x1 - HIGHWAY.x0, hz = HIGHWAY.z1 - HIGHWAY.z0;
     const len = Math.hypot(hx, hz);
     const dx = hx / len, dz = hz / len;
-    streets.push({ x0: HIGHWAY.x0, z0: HIGHWAY.z0, dx, dz, len, y: HIGHWAY.y + 0.4, kind: 'highway', width: HIGHWAY.width });
+    // THE ENDLESS HIGHWAY (owner: infinite both sides; vehicles must not vanish at its ends): one street HW_FAR past each end
+    // of the built square, so the traffic sim owns the continuation — its vehicles drive off the square onto the far deck
+    // and portal only at the far ends, out in the fog. The dressing below (the deck's solids for the flight, the lamps,
+    // the gantries, the piers) keeps to the square; the renderer carries the deck on along the street's own length.
+    streets.push({ x0: HIGHWAY.x0 - dx * HW_FAR, z0: HIGHWAY.z0 - dz * HW_FAR, dx, dz, len: len + 2 * HW_FAR, y: HIGHWAY.y + 0.4, kind: 'highway', width: HIGHWAY.width });
     for (let t = 0; t <= len; t += 10) { // the deck, as a chain of solids the flight respects
       const x = HIGHWAY.x0 + dx * t, z = HIGHWAY.z0 + dz * t;
       grid.add({ x, y: HIGHWAY.y, z, w: 12 + Math.abs(dz) * 8, h: 0.8, d: 14 + Math.abs(dx) * 2 });
@@ -2239,7 +2302,7 @@ export function planCity(seed: number): Plan {
     // the arterial itself — run on well past the rim's streets into the fog, so its ends are portals like the highway's
     // with room to queue between the rim's lights and the fog (a T dumping every vehicle onto the rim road, or a portal
     // a car's length past the last light, throttled the whole arterial); its walkers turn at the rim; lamps on its pavements
-    const past = 60;
+    const past = HW_FAR; // (the arterial runs as far as the deck over it: the same portals, the same fog)
     streets.push({ x0: HIGHWAY.x0 - dx * past, z0: HIGHWAY.z0 - dz * past, dx, dz, len: len + 2 * past, y: 0, kind: 'arterial', width: ARTERIAL.w, ends: { a: past + 6.5, b: past + 6.5 } });
     for (let t = 6; t < len; t += 12) {
       const x = HIGHWAY.x0 + dx * t, z = HIGHWAY.z0 + dz * t;

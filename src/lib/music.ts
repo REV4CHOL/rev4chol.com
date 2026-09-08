@@ -1,5 +1,5 @@
 /** MUSIC (owner: one track on every page and every section, continuous, never restarting; its own MUS button between
- *  SND and MTN; WATCH on a film page stops it until the next section or page; a loading screen never interrupts it).
+ *  SFX and MTN; WATCH on a film page stops it until the next section or page; a loading screen never interrupts it).
  *  The site's pages are separate documents, so the track's place is carried across each navigation in
  *  sessionStorage — the time it was at and the clock then — and the next page seeks to where the track would be
  *  now, wrapped by its length, and plays on; a page reached by a click may play at once (Chrome carries the activation
@@ -85,7 +85,8 @@ export class Music {
     if (p && typeof p.catch === 'function') p.catch(() => { this.deck.volume = 0; this.blocked = true; this.waiting.push(() => { if (this.enabled && !this.held && this.deck.paused) this.start(); }); });
   }
 
-  /** A gesture on the page (the shell wires pointerdown, keydown, touchend): a cold load's chance to play. */
+  /** A gesture on the page (the shell wires pointerdown, pointerup, click, keydown, touchend — iOS grants sound inside
+   *  a pointerup, click or touchend, never a pointerdown): a cold load's chance to play. */
   gesture(): void { this.blocked = false; const cbs = this.waiting; this.waiting = []; for (const cb of cbs) cb(); }
 
   /** Resolves when the track is audibly playing, or after `ms` — a page with heavy work ahead (the About city's build
@@ -113,8 +114,11 @@ export class Music {
     this.fade(0, 400, () => { this.deck.pause(); this.save(); });
   }
 
-  /** The MUS button. On lifts a hold; off stops and remembers. */
+  /** The MUS button. On lifts a hold; off stops and remembers. On but silent — refused so far (a phone's cold load:
+   *  iOS grants no sound before a gesture on the document) — the press IS the gesture: it plays, and stays on (owner:
+   *  on a phone the music stopped at every section and had to be re-enabled by hand). */
   toggle(): boolean {
+    if (this.enabled && !this.held && this.deck.paused) { this.blocked = false; this.waiting = []; this.start(); return true; }
     this.enabled = !this.enabled;
     try { this.local.setItem(CHOICE, this.enabled ? 'on' : 'off'); } catch { /* ok */ }
     if (this.enabled) { this.held = false; this.start(); } else this.fade(0, 300, () => { this.deck.pause(); this.save(); });

@@ -53,7 +53,7 @@ describe('Runners', () => {
     expect(sim.runners.filter((r) => r.act !== 'dance').length, 'most of them on the move (owner: no idle crowds on the roofs)').toBeGreaterThan(60);
   });
 
-  it("jumps at a runner's pace, not a flea's (owner: fewer jumps, slower): a flight every six to fourteen seconds a runner, most of the time on a roof", () => {
+  it("jumps at a runner's pace, not a flea's (owner: fewer jumps, slower; then half the pace, especially in flight): a flight every eight to twenty seconds a runner, on a roof more than in the air", () => {
     const sim = new Runners(plan.roofs, plan.grid, mulberry32(5), 60);
     const was = sim.runners.map((r) => r.act);
     const flying = (a: string) => a === 'leap' || a === 'thrust' || a === 'rocket';
@@ -65,9 +65,9 @@ describe('Runners', () => {
     }
     const perRunnerMinute = takeoffs / 60 / (6000 / 3600); // take-offs a runner a minute, at sixty frames a second
     console.log(`runners: ${perRunnerMinute.toFixed(1)} take-offs a runner a minute; in the air ${(air / samples / 60 * 100).toFixed(0)} %, dancing ${(dancing / samples / 60 * 100).toFixed(0) } %`);
-    expect(perRunnerMinute, 'a flight every six to fourteen seconds').toBeGreaterThan(4);
-    expect(perRunnerMinute, 'a flight every six to fourteen seconds').toBeLessThan(10);
-    expect(air / samples / 60, 'most of the time on a roof').toBeLessThan(0.4); // (a rocket crosses the city in five to ten seconds: a fifth of the flights, a third of the air time)
+    expect(perRunnerMinute, 'a flight every eight to twenty seconds').toBeGreaterThan(3);
+    expect(perRunnerMinute, 'a flight every eight to twenty seconds').toBeLessThan(8);
+    expect(air / samples / 60, 'on a roof more than in the air').toBeLessThan(0.5); // (the flights last twice what they did at the owner's half pace: a rocket crosses the city in ten to twenty seconds)
     expect(dancing / samples / 60, 'and not idling there (owner: no idle crowds on the roofs)').toBeLessThan(0.45);
   }, 60000);
 
