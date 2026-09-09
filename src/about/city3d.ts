@@ -51,6 +51,8 @@ import { Runners } from './city-runners';
 import { blendMover, frameScale, newMover, owed, renderTime, rollMover, STEP, stepsAllowed } from './city-clock';
 import type { Mover } from './city-clock';
 import { BEACON, beaconAlpha, glowSet, puffAdvance, puffPose } from './city-puffs';
+import { newGovernor, PHONE, startTier, steer, TIERS, WINDOW } from './city-governor';
+import type { Device } from './city-governor';
 import { farMasses, mergeBoxes } from './city-far';
 import { blendLooks, ease, horizonColor, lerpHex, Look as SkyLook, LOOKS as SKY, paintSky, TimeOfDay } from './city-sky';
 import { armReach, convexHull, DECK_KERB, SPEC, throughReach, Traffic } from './city-traffic';
@@ -162,31 +164,6 @@ function additiveFog<T extends Material>(m: T): T {
 const uBeyond = { value: new Color('#577fba') };
 Material.prototype.onBeforeCompile = function (shader: WebGLProgramParametersWithUniforms) { shader.uniforms.uBeyond = uBeyond; };
 
-/** QUALITY (owner: a render distance that adapts): four tiers of far plane,
- *  fog density, shadows and pixel size. The opening tier reads the
- *  connection (the Network Information API, where the browser offers it)
- *  and the device; from then on the measured frame time steps the tier
- *  down when frames run long and back up when they run short. */
-interface Tier { label: string; far: number; fog: number; shadows: boolean; pix: number }
-const TIERS: Tier[] = [ // (owner: the whole map inside the fence at once, at every tier; past it the endless city's tiles, ring 1 at every tier, ring 2 from high, the far LOD's rings to 5,985 always; the eye's fog thin — 0.13 at 1,500, 0.79 at 5,000 — the beyond is the world's, not the eye's: see fog_fragment)
-  { label: 'low', far: 20000, fog: 0.0003, shadows: false, pix: 3 },
-  { label: 'mid', far: 20000, fog: 0.0003, shadows: false, pix: 2 },
-  { label: 'high', far: 20000, fog: 0.00028, shadows: true, pix: 1 }, // (high and ultra render at the screen's own pixels: the owner's PC 'window glitch' was a half-resolution render's sparkle)
-  { label: 'ultra', far: 20000, fog: 0.00025, shadows: true, pix: 1 },
-];
-function startTier(): number {
-  const nav = navigator as Navigator & { connection?: { effectiveType?: string; saveData?: boolean; downlink?: number }; deviceMemory?: number };
-  const c = nav.connection;
-  let t = 2;
-  if (c) {
-    if (c.saveData || c.effectiveType === 'slow-2g' || c.effectiveType === '2g') t = 0;
-    else if (c.effectiveType === '3g') t = 1;
-    else if ((c.downlink ?? 10) >= 20) t = 3;
-  }
-  if ((nav.hardwareConcurrency ?? 8) < 4 || (nav.deviceMemory ?? 8) < 4) t = Math.min(t, 1);
-  if (isMobile()) t = Math.min(t, 1);
-  return t;
-}
 
 // the windows: warm sodium and cool fluorescent whites, a rare saturated pane (a shop, a screen behind glass) —
 // the colour of the street is the signs' (owner: the lit grids read as a Mondrian by day)
@@ -1298,7 +1275,8 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   let lampLevel = 1;
   let starLevel = 1;
   let fogMul = 1;
-  let tier = startTier();
+  let tier = startTier(navigator as unknown as Device, isMobile());
+  const gov = newGovernor(tier, performance.now(), PHONE.floor); // THE GOVERNOR (city-governor.ts): the render scale and the tier by the measured frame
   const pixOf = (t: number) => (isMobile() ? 2 : TIERS[t].pix); // a phone renders at half its pixels like a desktop (owner: the city froze on a phone — at its own pixels it pushed three times a desktop's through three passes)
   let PIX = pixOf(tier);
   // A PHONE'S PIXELS (owner: the city looked too blurry on mobile): the canvas was sized in CSS pixels over PIX with the
@@ -1307,13 +1285,12 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   // screen — about a desktop's half-resolution pixel count), and the scale ADAPTS to the frame: down by a fifth while a
   // render averages over 26 ms, back up while under 14; floor 0.6× CSS, ceiling the ratio's.
   const phoneCeil = Math.min(window.devicePixelRatio || 1, 2) / 1.6;
-  let phoneScale = phoneCeil, phoneRenderSum = 0;
   // THE DESKTOP'S PIXELS (owner: the windows still glitched on the PC once the phone was fixed — the phone had begun
   // rendering at its own pixel ratio, the desktop still rendered at CSS pixels over PIX with the ratio ignored: at a
   // ratio of 1.5, three device pixels a render pixel, and every thin rail and window grid sparkled as the camera
   // moved). The desktop renders at min(ratio, 2) over the tier's PIX: PIX device pixels a render pixel, whatever the
   // ratio — and the ultra tier's PIX is 1, the screen's own pixels.
-  const deskScale = () => Math.min(window.devicePixelRatio || 1, 2) / PIX;
+  const deskScale = () => Math.min(window.devicePixelRatio || 1, 2) / PIX * gov.scale; // (times the governor's scale)
   const fog = new FogExp2('#0c1826', TIERS[tier].fog);
   scene.fog = fog;
 
@@ -1326,7 +1303,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   renderer.shadowMap.enabled = TIERS[tier].shadows;
   // a lost context (a phone under memory pressure) is restored, at the lowest tier, instead of freezing the last frame
   canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); }, false);
-  canvas.addEventListener('webglcontextrestored', () => { tier = 0; applyTier(); lastChange = performance.now() + 30000; render(); }, false);
+  canvas.addEventListener('webglcontextrestored', () => { tier = 0; gov.tier = 0; gov.ceiling = 0; gov.scale = 1; gov.until = performance.now() + 30000; applyTier(); fit(); }, false);
   renderer.shadowMap.type = PCFSoftShadowMap; // (soft edges do not crawl as the frustum steps)
   // CINEMATIC LIGHT (owner: contrast, shadow, highlights): a blue hemisphere
   // (sky above, the streets' sodium below) and the moon as a key light that
@@ -1846,7 +1823,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   // material; fog-lit like everything: the fog of war dissolves them into the sky's band, the haze pass blurs them.
   const farSkin = farSkinTexture(rand);
   const farWalls = new MeshLambertMaterial({ map: farSkin, emissiveMap: farSkin, emissive: '#ffffff', emissiveIntensity: 2.2, vertexColors: true, color: '#2a3352' });
-  const lod2: Object3D[] = []; // ring 2's stand-in (applyTier)
+  const lodGates: { o: Object3D; on: (t: number) => boolean }[] = []; // the far LOD by tier (applyTier): ring 2's stand-in below high, the dense rings from high, the sparse below
   {
     const all = [...plan.core, ...plan.outer, ...plan.filler];
     const lodRand = mulberry32(seed ^ 0xfa215);
@@ -1864,19 +1841,24 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
       return g;
     };
     const lm = new Matrix4(), lr = new Matrix4();
-    const build = (ts: CityTile[], minH: number, standIn = false) => {
+    const build = (ts: CityTile[], minH: number, on: (t: number) => boolean) => {
       for (const [qx, qz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
         const quad = ts.filter((t) => (t.dx >= 0 ? 1 : -1) === qx && (t.dz >= 0 ? 1 : -1) === qz);
         if (!quad.length) continue;
         const inst = new InstancedMesh(lodGeo(minH), [farWalls, dark], quad.length);
         quad.forEach((t, j) => { lm.makeTranslation(t.dx, 0, t.dz).multiply(lr.makeRotationY(t.q * Math.PI / 2)); inst.setMatrixAt(j, lm); });
         inst.instanceMatrix.needsUpdate = true;
-        if (standIn) { inst.visible = tier < 2; lod2.push(inst); }
+        inst.visible = on(tier);
+        lodGates.push({ o: inst, on });
         scene.add(inst);
       }
     };
-    if (isMobile()) { build(cityTiles(2, 2), 12); build(cityTiles(4, 3), 24); }
-    else { build(cityTiles(2, 2), 12, true); build(cityTiles(4, 3), 12); build(cityTiles(7, 5), 24); }
+    if (isMobile()) { build(cityTiles(2, 2), PHONE.lod[0], () => true); build(cityTiles(4, 3), PHONE.lod[1], () => true); }
+    else {
+      build(cityTiles(2, 2), TIERS[0].lod[0], (t) => t < 2);
+      for (const h of new Set(TIERS.map((t) => t.lod[0]))) build(cityTiles(4, 3), h, (t) => TIERS[t].lod[0] === h);
+      for (const h of new Set(TIERS.map((t) => t.lod[1]))) build(cityTiles(7, 5), h, (t) => TIERS[t].lod[1] === h);
+    }
   }
   // (owner: no boulevard, river or highway outside the border — the copies carry the grid roads and lanes alone, laid
   // with the city's own further down; the arterial's strip, the boulevard's, the highway's deck and the canal's water
@@ -4106,7 +4088,6 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
       practicals.push({ x: m.x + (stadium.x - m.x) * 0.45, y: m.h * 0.6, z: m.z + (stadium.z - m.z) * 0.45, color: new Color('#eef4ff'), power: 380, reach: 110 });
     }
   }
-  const POOL = [0, 8, 14, 18]; // real point lights by tier
   interface Slot { light: PointLight; src: Practical | null; level: number; on: boolean }
   const slots: Slot[] = [];
   const lightPool = new Group();
@@ -4119,7 +4100,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     }
     while (slots.length > n) lightPool.remove(slots.pop()!.light);
   };
-  setPool(POOL[tier]);
+  setPool(isMobile() ? PHONE.lights[tier] : TIERS[tier].lights);
   const focus = new Vector3();
   const scored: { p: Practical; s: number }[] = [];
   let lightTick = 0;
@@ -4254,7 +4235,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   const fit = () => {
     const w = Math.max(1, canvas.clientWidth);
     const h = Math.max(1, canvas.clientHeight);
-    const s = isMobile() ? phoneScale : deskScale();
+    const s = isMobile() ? phoneCeil * gov.scale : deskScale();
     renderer.setSize(Math.ceil(w * s), Math.ceil(h * s), false);
     composer.setSize(Math.ceil(w * s), Math.ceil(h * s));
     for (const m of farMats) m.uniforms.uScale.value = Math.ceil(h * s) / 2; // the far traffic's point size follows the frame
@@ -4317,15 +4298,6 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     cruiseCraft();
     timing.rest = performance.now() - t0;
     if (tick % 30 === 0) { const cost = timing.traffic + peopleCost; if (cost > 14) peopleSlow = true; else if (cost < 7) peopleSlow = false; }
-    if (isMobile()) { // the phone's render scale follows its frame
-      phoneRenderSum += timing.render;
-      if (tick % 60 === 0) {
-        const avg = phoneRenderSum / 60, was = phoneScale;
-        phoneRenderSum = 0;
-        if (avg > 26) phoneScale = Math.max(0.6, phoneScale * 0.8); else if (avg < 14) phoneScale = Math.min(phoneCeil, phoneScale * 1.15);
-        if (Math.abs(phoneScale - was) > 0.01) fit();
-      }
-    }
   };
   driveCars(); runTrains(); runCabs(); walkPeople(); runRoofs(); fly(); flyAir(); playMatch(); cruiseCraft(); breathe();
   fit();
@@ -4336,7 +4308,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     camera.far = T.far;
     camera.updateProjectionMatrix();
     fog.density = T.fog * fogMul;
-    setPool(POOL[tier]);
+    setPool(isMobile() ? PHONE.lights[tier] : TIERS[tier].lights);
     renderer.shadowMap.enabled = T.shadows;
     moonLight.castShadow = T.shadows;
     moonLight.shadow.intensity = T.shadows && lookNow.shadows ? 1 : 0;
@@ -4345,35 +4317,31 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     shadowPrimed = false; // the tier's maps are new: render them once even under a look that shows no shadow
     if (PIX !== pixOf(tier)) { PIX = pixOf(tier); fit(); }
     for (const ring of [1, 2]) for (const m of tileMeshes[ring]) m.visible = ring === 1 || tier >= 2; // the endless city's rings
-    for (const m of lod2) m.visible = tier < 2; // (ring 2's far stand-in while the full ring is hidden)
+    for (const g of lodGates) g.o.visible = g.on(tier); // the far LOD by tier
     refreshMaterials();
   };
-  // the frame clock: long frames step the tier down, short ones (for a
-  // while) step it back up; the first seconds and hidden tabs don't count
+  // THE GOVERNOR (city-governor.ts; owner: other people's PCs stutter, the phone lags): a window of frames' mean interval
+  // and the CPU's share steer the render scale and the tier; hidden tabs and frames over 250 ms don't count
   let lastFrame = performance.now();
-  let frames = 0, spent = 0;
-  // THE WORLD'S CLOCK (owner: slow motion and lag on a phone; city-clock.ts): the sims step at 60 Hz by an accumulator
-  // of real time, at most three steps a frame and at most what a step's cost allows; the rigs advance by the frame
-  let lastChange = performance.now() + 3000;
-  let ceiling = TIERS.length - 1; // a tier that ran long is closed for the session (the ladder used to climb back into it every dozen seconds)
+  let frames = 0, spent = 0, busy = 0;
   const loop = () => {
     requestAnimationFrame(loop);
     const now = performance.now();
     const dt = now - lastFrame;
     lastFrame = now;
     if (document.hidden) { acc = 0; return; }
-    if (now > lastChange && dt < 250) {
-      spent += dt; frames += 1;
-      if (frames >= 90) {
-        const avg = spent / frames;
-        spent = 0; frames = 0;
-        if (avg > 26 && tier > 0) { tier -= 1; ceiling = tier; applyTier(); lastChange = now + 4000; }
-        else if (avg < 11.5 && tier < ceiling && now - lastChange > 12000) { tier += 1; applyTier(); lastChange = now + 2000; }
-      }
-    }
     acc = owed(acc, dt);
     const steps = stepsAllowed(acc, stepCost);
     if (steps) { const t0 = performance.now(); for (let i = 0; i < steps; i++) tickWorld(); stepCost = (performance.now() - t0) / steps; acc -= steps * STEP; }
+    if (dt < 250) {
+      spent += dt; frames += 1; busy += steps * stepCost + timing.render;
+      if (frames >= WINDOW) {
+        const verdict = steer(gov, spent / frames, busy / frames, now);
+        spent = 0; frames = 0; busy = 0;
+        if (verdict === 'down' || verdict === 'up') { tier = gov.tier; applyTier(); }
+        if (verdict) fit();
+      }
+    }
     fscale = frameScale(dt);
     if (mode !== 'tour' || !calm || tick % 2 === 0 || Math.abs(target - sm) > 0.0004) render(); // (calm: the tour at half rate, never still)
   };
@@ -4436,7 +4404,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
       camera.getWorldDirection(fwd);
       return { x: camera.position.x, y: camera.position.y, z: camera.position.z, yaw: free.yaw, pitch: free.pitch, mode, dir: [fwd.x, fwd.y, fwd.z] };
     },
-    quality: () => ({ tier: TIERS[tier].label, far: camera.far, fog: fog.density, shadows: renderer.shadowMap.enabled && moonLight.shadow.intensity > 0, pix: PIX, scale: isMobile() ? phoneScale : deskScale(), render: [renderer.domElement.width, renderer.domElement.height] }),
+    quality: () => ({ tier: TIERS[tier].label, far: camera.far, fog: fog.density, shadows: renderer.shadowMap.enabled && moonLight.shadow.intensity > 0, pix: PIX, scale: isMobile() ? phoneCeil * gov.scale : deskScale(), render: [renderer.domElement.width, renderer.domElement.height] }),
     timings: () => ({ ...timing }),
     info: () => ({ calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, points: renderer.info.render.points, lines: renderer.info.render.lines, geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures, programs: renderer.info.programs?.length ?? 0 }),
     shimmer: (steps = 6, slide = 0.04) => { // how much a patch at the frame's centre changes as the eye slides sideways a hair: a jitter metric (0 = stable)
@@ -4473,7 +4441,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
       for (let i = 0; i < w * h; i++) out.push(Math.round(px[i * 4] * 0.3 + px[i * 4 + 1] * 0.5 + px[i * 4 + 2] * 0.2));
       return out;
     },
-    setQuality: (t) => { tier = Math.max(0, Math.min(TIERS.length - 1, Math.round(t))); ceiling = tier; applyTier(); lastChange = performance.now() + 30000; render(); },
+    setQuality: (t) => { tier = Math.max(0, Math.min(TIERS.length - 1, Math.round(t))); gov.tier = tier; gov.ceiling = tier; gov.scale = 1; gov.until = performance.now() + 30000; applyTier(); fit(); },
     setTime: (t, instant = false) => { setTime(t, instant); render(); },
     time: () => timeNow,
     probe: () => ({
