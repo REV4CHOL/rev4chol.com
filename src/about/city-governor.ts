@@ -26,7 +26,8 @@ export function startTier(dev: Device, mobile: boolean): number {
 /** A frame over SLOW ms is long; under FAST with the CPU under BUSY ms is headroom; a window is WINDOW frames. */
 export const SLOW = 20, FAST = 17.5, BUSY = 9, WINDOW = 90;
 export interface Governor { tier: number; scale: number; ceiling: number; floor: number; until: number; lastChange: number; lastDown: number }
-export const newGovernor = (tier: number, now: number, floor = 0.6): Governor => ({ tier, scale: 1, ceiling: TIERS.length - 1, floor, until: now + 3000, lastChange: now, lastDown: now });
+/** A governor at `tier`: the scale whole, the ceiling the top tier (a phone: mid — no shadows, no full ring 2 on a phone, however fast). */
+export const newGovernor = (tier: number, now: number, floor = 0.6, ceiling = TIERS.length - 1): Governor => ({ tier, scale: 1, ceiling, floor, until: now + 3000, lastChange: now, lastDown: now });
 export type Steer = 'scale-down' | 'down' | 'scale-up' | 'up' | null;
 /** A window's verdict — `avg` the frames' mean interval (ms), `busy` the CPU's share of a frame (the steps and the
  *  render's submission), at `now` (ms). Long frames shrink the render scale by a fifth to the floor, then step the tier

@@ -37,6 +37,7 @@ import {
 import type { WebGLProgramParametersWithUniforms, WebGLRenderTarget } from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { isMobile, reducedMotion } from '../lib/env';
@@ -799,6 +800,29 @@ function glyphTexture(rand: () => number, w: number, h: number, n: number, verti
   return asPixelTex(new CanvasTexture(c));
 }
 
+/** Static parts merged by material (owner: a weak PC stuttered — a draw call a part): the world matrices baked, one
+ *  mesh a material under the scene (the first part's shadow flags), the parts removed from their parents. */
+function mergeStatic(scene: Scene, parts: Mesh[]): Mesh[] {
+  const byMat = new Map<Material, { geos: BufferGeometry[]; cast: boolean; receive: boolean }>();
+  for (const part of parts) {
+    if (Array.isArray(part.material)) continue;
+    part.updateWorldMatrix(true, false);
+    const e = byMat.get(part.material) ?? { geos: [], cast: part.castShadow, receive: part.receiveShadow };
+    e.geos.push(part.geometry.clone().applyMatrix4(part.matrixWorld));
+    byMat.set(part.material, e);
+    part.parent?.remove(part);
+  }
+  const out: Mesh[] = [];
+  for (const [m, e] of byMat) {
+    const merged = mergeGeometries(e.geos);
+    for (const g of e.geos) g.dispose();
+    if (!merged) continue;
+    const mesh = new Mesh(merged, m);
+    mesh.castShadow = e.cast; mesh.receiveShadow = e.receive;
+    scene.add(mesh); out.push(mesh);
+  }
+  return out;
+}
 /** A glow as an instanced billboard (owner: a thousand sprites were a thousand draw calls): the instance's translation
  *  and scale kept, the quad laid across the view; the tint in the instance colour, the fade in the instanced aAlpha. */
 function billboardMaterial(map: CanvasTexture): MeshBasicMaterial {
@@ -1276,7 +1300,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   let starLevel = 1;
   let fogMul = 1;
   let tier = startTier(navigator as unknown as Device, isMobile());
-  const gov = newGovernor(tier, performance.now(), PHONE.floor); // THE GOVERNOR (city-governor.ts): the render scale and the tier by the measured frame
+  const gov = newGovernor(tier, performance.now(), PHONE.floor, isMobile() ? 1 : TIERS.length - 1); // THE GOVERNOR (city-governor.ts): the render scale and the tier by the measured frame
   const pixOf = (t: number) => (isMobile() ? 2 : TIERS[t].pix); // a phone renders at half its pixels like a desktop (owner: the city froze on a phone — at its own pixels it pushed three times a desktop's through three passes)
   let PIX = pixOf(tier);
   // A PHONE'S PIXELS (owner: the city looked too blurry on mobile): the canvas was sized in CSS pixels over PIX with the
@@ -2115,6 +2139,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     box(-2.55, 6.4, 0, 1.5, 0.5, 0.42, bronze, -0.6); box(-3.3, 5.5, 0, 1.1, 0.42, 0.36, bronze, -1.0); // the tail, flying back and down
     horse.rotation.y = 0; // facing +x: east, down the boulevard
     scene.add(horse);
+    mergeStatic(scene, horse.children.filter((o): o is Mesh => (o as Mesh).isMesh === true)); // (the stallion: thirty boxes, two draw calls — bronze and stone)
     lampHeads.push(paving);
   }
   // -- THE CAT (owner: a giant orange cat sitting on one of the skyscrapers in the centre): boxes of orange and cream on
@@ -2201,9 +2226,10 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   const fixBox = (parent: Object3D, x: number, y: number, z: number, w: number, h: number, d: number, m: Material = FIX) => {
     const b = new Mesh(geo.box, m); b.position.set(x, y, z); b.scale.set(w, h, d); b.castShadow = true; parent.add(b); return b;
   };
+  const mounts: Group[] = []; // the static mounts — decks, lattices, rings — merged by material after the build (a draw call a part once)
   /** A railed deck `size` square, its top at y, centred on (x, z). */
   const deckAt = (x: number, y: number, z: number, size: number) => {
-    const g = new Group(); g.position.set(x, y, z); scene.add(g);
+    const g = new Group(); g.position.set(x, y, z); scene.add(g); mounts.push(g);
     fixBox(g, 0, -0.09, 0, size, 0.18, size);
     const h = size / 2 - 0.08;
     for (const [px, pz] of [[-h, -h], [h, -h], [-h, h], [h, h]]) fixBox(g, px, 0.45, pz, 0.08, 0.9, 0.08, RAILM);
@@ -2211,14 +2237,14 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   };
   /** A lattice mast: four legs on a one-unit square, rungs every 2.4, from y0 up to y1. */
   const latticeAt = (x: number, y0: number, z: number, y1: number) => {
-    const g = new Group(); g.position.set(x, 0, z); scene.add(g);
+    const g = new Group(); g.position.set(x, 0, z); scene.add(g); mounts.push(g);
     const H = y1 - y0;
     for (const [px, pz] of [[-0.5, -0.5], [0.5, -0.5], [-0.5, 0.5], [0.5, 0.5]]) fixBox(g, px, y0 + H / 2, pz, 0.12, H, 0.12);
     for (let y = y0 + 1.2; y < y1 - 0.4; y += 2.4) for (const k of [-1, 1]) { fixBox(g, 0, y, k * 0.5, 1.0, 0.08, 0.08); fixBox(g, k * 0.5, y, 0, 0.08, 0.08, 1.0); }
   };
   /** A railed ring about a stack: a flat annulus from r0 to r1, its top at y, posts and a rail about its rim. */
   const ringAt = (cx: number, y: number, cz: number, r0: number, r1: number) => {
-    const g = new Group(); g.position.set(cx, y, cz); scene.add(g);
+    const g = new Group(); g.position.set(cx, y, cz); scene.add(g); mounts.push(g);
     const deck = new Mesh(new RingGeometry(r0, r1, 28), FIX2); deck.rotation.x = -Math.PI / 2; deck.position.y = -0.05; deck.castShadow = true; g.add(deck);
     for (let i = 0; i < 10; i++) { const a = (i / 10) * Math.PI * 2; fixBox(g, Math.cos(a) * (r1 - 0.1), 0.45, Math.sin(a) * (r1 - 0.1), 0.08, 0.9, 0.08, RAILM); }
     const rail = new Mesh(new TorusGeometry(r1 - 0.1, 0.04, 6, 36), RAILM); rail.rotation.x = Math.PI / 2; rail.position.y = 0.9; g.add(rail);
@@ -2253,6 +2279,12 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     scene.add(g);
   };
   for (const s of plan.searchlights) beamAt(s); // (the plan places and mounts them, tested clear of the solids and the cat, every mount on something)
+  { // the mounts' parts merged by material (owner: a weak PC stuttered — the decks, rails, rungs and rings were a draw call each); the yokes and drums turn on their own
+    const parts: Mesh[] = [];
+    for (const g of mounts) g.traverse((o) => { if ((o as Mesh).isMesh) parts.push(o as Mesh); });
+    mergeStatic(scene, parts);
+    for (const g of mounts) scene.remove(g);
+  }
   const beamDir = new Vector3(), beamTo = new Vector3();
   const sweep = () => {
     for (const b of beams) {
@@ -2548,23 +2580,36 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     tag: [32, 16, 3, false, true], roof: [64, 16, 7, false, true], gantry: [96, 24, 9, false, true],
   };
   const signGroups = new Map<string, { sign: Sign[]; tex: CanvasTexture }>();
-  const screens: { tex: CanvasTexture; ctx: CanvasRenderingContext2D }[] = [];
+  // THE SCREENS (owner: a weak PC stuttered): the giant screens were a mesh, a material, a canvas and an upload each;
+  // they are one mesh over one atlas (a 32 × 20 cell a screen), repainted and uploaded once every six ticks
+  const screenSigns = plan.signs.filter((sg) => sg.kind === 'screen');
+  const SCREEN_COLS = 8, SCREEN_ROWS = Math.max(1, Math.ceil(screenSigns.length / SCREEN_COLS));
+  const screenCanvas = document.createElement('canvas');
+  screenCanvas.width = SCREEN_COLS * 32; screenCanvas.height = SCREEN_ROWS * 20;
+  const screenCtx = screenCanvas.getContext('2d')!;
+  const paintScreens = () => {
+    for (let i = 0; i < screenSigns.length; i++) { screenCtx.save(); screenCtx.translate((i % SCREEN_COLS) * 32, Math.floor(i / SCREEN_COLS) * 20); paintScreen(screenCtx, rand); screenCtx.restore(); }
+  };
+  paintScreens();
+  const screenTex = asPixelTex(new CanvasTexture(screenCanvas));
+  {
+    const pos: number[] = [], uvs: number[] = [], idx: number[] = [];
+    screenSigns.forEach((sg, i) => {
+      const ax = Math.cos(sg.rotY), az = -Math.sin(sg.rotY); // the quad's across: a plane turned by rotY
+      const u0 = (i % SCREEN_COLS) / SCREEN_COLS, u1 = u0 + 1 / SCREEN_COLS, v1 = 1 - Math.floor(i / SCREEN_COLS) / SCREEN_ROWS, v0 = v1 - 1 / SCREEN_ROWS;
+      const b = pos.length / 3;
+      for (const [sx, sy, u, v] of [[-0.5, -0.5, u0, v0], [0.5, -0.5, u1, v0], [0.5, 0.5, u1, v1], [-0.5, 0.5, u0, v1]]) { pos.push(sg.x + ax * sx * sg.w, sg.y + sy * sg.h, sg.z + az * sx * sg.w); uvs.push(u, v); }
+      idx.push(b, b + 1, b + 2, b, b + 2, b + 3);
+    });
+    const g = new BufferGeometry();
+    g.setAttribute('position', new BufferAttribute(new Float32Array(pos), 3)); g.setAttribute('uv', new BufferAttribute(new Float32Array(uvs), 2)); g.setIndex(idx);
+    const m = new Mesh(g, new MeshBasicMaterial({ map: screenTex, fog: false, side: DoubleSide }));
+    m.frustumCulled = false;
+    scene.add(m);
+  }
   let signIdx = 0;
   for (const sg of plan.signs) {
-    if (sg.kind === 'screen') {
-      const c = document.createElement('canvas');
-      c.width = 32; c.height = 20;
-      const ctx = c.getContext('2d')!;
-      paintScreen(ctx, rand);
-      const map = asPixelTex(new CanvasTexture(c));
-      screens.push({ tex: map, ctx });
-      const m = new Mesh(geo.plane, new MeshBasicMaterial({ map, fog: false, side: DoubleSide }));
-      m.position.set(sg.x, sg.y, sg.z);
-      m.scale.set(sg.w, sg.h, 1);
-      m.rotation.y = sg.rotY;
-      scene.add(m);
-      continue;
-    }
+    if (sg.kind === 'screen') continue;
     const id = `${sg.kind}:${signIdx++ % 3}`;
     let grp = signGroups.get(id);
     if (!grp) {
@@ -4101,7 +4146,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     }
     while (slots.length > n) lightPool.remove(slots.pop()!.light);
   };
-  setPool(isMobile() ? PHONE.lights[tier] : TIERS[tier].lights);
+  setPool(isMobile() ? PHONE.lights[Math.min(tier, PHONE.lights.length - 1)] : TIERS[tier].lights);
   const focus = new Vector3();
   const scored: { p: Practical; s: number }[] = [];
   let lightTick = 0;
@@ -4269,7 +4314,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     for (let i = 0; i < glowSpecs.beacons.length; i++) glowAlpha.array[NPUFF + i] = beaconAlpha(tick, i);
     glowAlpha.needsUpdate = true;
     if (tick % 6 === 0) {
-      for (const s of screens) { paintScreen(s.ctx, rand); s.tex.needsUpdate = true; }
+      paintScreens(); screenTex.needsUpdate = true;
       flicker();
     }
     tendHolos();
@@ -4301,6 +4346,10 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     if (tick % 30 === 0) { const cost = timing.traffic + peopleCost; if (cost > 14) peopleSlow = true; else if (cost < 7) peopleSlow = false; }
   };
   driveCars(); runTrains(); runCabs(); walkPeople(); runRoofs(); fly(); flyAir(); playMatch(); cruiseCraft(); breathe();
+  // STATIC FURNITURE MERGED (owner: a weak PC stuttered): a box added straight to the scene under a plain Lambert — the
+  // bridges' pylons, stays, walls and piers, the canal's ends — is static furniture (whatever moves lives in a group or
+  // an instanced mesh); merged by material, a draw call a material
+  mergeStatic(scene, scene.children.filter((o): o is Mesh => (o as Mesh).isMesh === true && !(o as InstancedMesh).isInstancedMesh && (o as Mesh).geometry.type === 'BoxGeometry' && !Array.isArray((o as Mesh).material) && ((o as Mesh).material as Material).type === 'MeshLambertMaterial' && !((o as Mesh).material as MeshLambertMaterial).map));
   fit();
   if (typeof ResizeObserver !== 'undefined') new ResizeObserver(fit).observe(canvas);
 
@@ -4309,7 +4358,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     camera.far = T.far;
     camera.updateProjectionMatrix();
     fog.density = T.fog * fogMul;
-    setPool(isMobile() ? PHONE.lights[tier] : TIERS[tier].lights);
+    setPool(isMobile() ? PHONE.lights[Math.min(tier, PHONE.lights.length - 1)] : TIERS[tier].lights);
     renderer.shadowMap.enabled = T.shadows;
     moonLight.castShadow = T.shadows;
     moonLight.shadow.intensity = T.shadows && lookNow.shadows ? 1 : 0;

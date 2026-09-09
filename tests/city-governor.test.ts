@@ -49,9 +49,11 @@ describe("The governor (owner: other people's PCs stutter; the phone lags)", () 
     expect(steer(h, FAST, 5, 16000), 'at the line it holds').toBe(null);
     expect(steer(h, 16, 5, 16000)).toBe('up'); expect(h.tier).toBe(3);
   });
-  it('a phone keeps its floor', () => {
-    const g = newGovernor(1, 0, PHONE.floor);
+  it('a phone keeps its floor and never climbs past mid', () => {
+    const g = newGovernor(1, 0, PHONE.floor, 1);
     for (let t = 3000; t < 20000; t += 2100) steer(g, 40, 30, t);
     expect(g.tier).toBe(0); expect(g.scale).toBeGreaterThanOrEqual(0.6);
+    const h = newGovernor(1, 0, PHONE.floor, 1);
+    expect(steer(h, 8, 3, 13000), 'a 120 Hz phone with headroom').toBe(null); expect(h.tier).toBe(1);
   });
 });
