@@ -1341,11 +1341,12 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     moonLight.position.set(fx + keyDir.x * 340, keyDir.y * 340, fz + keyDir.z * 340);
   };
   const composer = new EffectComposer(renderer, lensTarget(2, 2, isMobile() ? 0 : 4)); // (the desktop's scene pass is multisampled: see lensTarget)
-  const lens = new LensPass();
+  const lens = new LensPass(isMobile() ? { cheap: true } : {}); // (a phone: the lens without its softness fetches)
   const haze = new HazePass(); // the distance blur, by the fog of war's amount in the frame's alpha
   composer.addPass(new RenderPass(scene, camera));
-  composer.addPass(haze);
+  if (!isMobile()) composer.addPass(haze); // (a phone: no distance-blur pass — thirteen taps at its pixels)
   const bloom = new UnrealBloomPass(new Vector2(2, 2), 0.62, 0.42, 0.4);
+  if (isMobile()) { const full = bloom.setSize.bind(bloom); bloom.setSize = (w: number, h: number) => full(Math.ceil(w / 2), Math.ceil(h / 2)); } // (a phone: the bloom at half size)
   composer.addPass(bloom);
   composer.addPass(lens);
   composer.addPass(new OutputPass());

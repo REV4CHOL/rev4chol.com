@@ -46,10 +46,12 @@ const LENS_FRAG = /* glsl */ `
     vec2 d = c * (1.0 + k * r2) / (1.0 + k);
     vec2 uv = 0.5 + d;
     vec3 col = fetch(uv, d, r2);
-    float s = soft * r2;
+#if SOFT
+    float s = soft * r2; // the field softness: four more fetches (a phone compiles without them: SOFT 0)
     col = col * 0.4 + 0.15 * (
       fetch(uv + vec2(s, 0.0), d, r2) + fetch(uv - vec2(s, 0.0), d, r2) +
       fetch(uv + vec2(0.0, s), d, r2) + fetch(uv - vec2(0.0, s), d, r2));
+#endif
     col *= 1.0 - vig * pow(r2, 1.15);
     // the grade (the time of day sets it): contrast about the mids, a tint for the shadows, a tint for the highlights
     float luma = dot(col, vec3(0.299, 0.587, 0.114));
@@ -64,9 +66,11 @@ export class LensPass extends Pass {
   private readonly quad: FullScreenQuad;
   private readonly mat: ShaderMaterial;
 
-  constructor(opts: { k?: number; ca?: number; vig?: number; soft?: number } = {}) {
+  /** `cheap`: without the softness fetches — a phone (owner: mobile is very laggy). */
+  constructor(opts: { k?: number; ca?: number; vig?: number; soft?: number; cheap?: boolean } = {}) {
     super();
     this.mat = new ShaderMaterial({
+      defines: { SOFT: opts.cheap ? 0 : 1 },
       uniforms: {
         tDiffuse: { value: null }, aspect: { value: 1 },
         k: { value: opts.k ?? 0.11 }, ca: { value: opts.ca ?? 0.005 },
