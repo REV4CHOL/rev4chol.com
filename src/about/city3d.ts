@@ -48,7 +48,8 @@ import {
 import { fov24, HazePass, LensPass, lensTarget } from './city-post';
 import { CAST, People, Zone, marketZones } from './city-people';
 import { Runners } from './city-runners';
-import { frameScale, owed, STEP, stepsAllowed } from './city-clock';
+import { blendMover, frameScale, newMover, owed, renderTime, rollMover, STEP, stepsAllowed } from './city-clock';
+import type { Mover } from './city-clock';
 import { farMasses, mergeBoxes } from './city-far';
 import { blendLooks, ease, horizonColor, lerpHex, Look as SkyLook, LOOKS as SKY, paintSky, TimeOfDay } from './city-sky';
 import { armReach, convexHull, DECK_KERB, SPEC, throughReach, Traffic } from './city-traffic';
@@ -1243,6 +1244,8 @@ export interface CityRide {
   quality(): { tier: string; far: number; fog: number; shadows: boolean; pix: number; /** The render scale over CSS pixels (a phone adapts it) and the buffer size. */ scale: number; render: [number, number] };
   /** The last frame's costs in ms, and a jitter probe: how much the frame's centre changes as the eye slides a hair. */
   timings(): { traffic: number; people: number; rest: number; render: number };
+  /** The frame the renderer last drew, every pass summed (a probe): draw calls, triangles, points, lines; the geometries, textures and programs alive. */
+  info(): { calls: number; triangles: number; points: number; lines: number; geometries: number; textures: number; programs: number };
   shimmer(steps?: number, slide?: number): number;
   /** Verification: one frame rendered at a fixed size and read back as luma per pixel, row-major from the bottom
    *  (the pane may be hidden, which gives the canvas no size). */
@@ -1267,6 +1270,10 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   const plan = planCity(seed);
   const rand = mulberry32(seed ^ 0x9e3779b9); // the renderer's own stream; the plan owns the seed
   const calm = reducedMotion();
+  // THE MOVERS (owner: every lane jittered): every buffer a sim writes for the GPU is shown between its last two steps
+  // (city-clock.ts) — a driver rolls its movers after writing, render() blends them at the frame's time
+  const movers: { m: Mover; attr: { needsUpdate: boolean } }[] = [];
+  const mover = (arr: ArrayLike<number>, attr: { needsUpdate: boolean }, stride: number, snap: number): Mover => { const m = newMover(arr as Float32Array, stride, snap); movers.push({ m, attr }); return m; };
   const scene = new Scene();
   (window as unknown as { rvlScene?: Scene }).rvlScene = scene; // verification: the scene graph, for the pane
   // what a LOOK (city-sky.ts) dims or scales: the lamps' glow, the neon, the stars, the point lights
@@ -1299,6 +1306,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   const camera = new PerspectiveCamera(fov24(1), 1, 0.5, TIERS[tier].far); // near 0.5: depth precision for the decals far down the street
   const renderer = new WebGLRenderer({ canvas, antialias: false, powerPreference: 'low-power' });
   renderer.setPixelRatio(1);
+  renderer.info.autoReset = false; // (the frame is counted across every pass — render() resets it; rvlRide.info reads it)
   renderer.toneMapping = NeutralToneMapping; // a soft shoulder and NO toe: the shadows keep what light they have (owner: the city was in darkness)
   renderer.toneMappingExposure = 1.15;
   renderer.shadowMap.enabled = TIERS[tier].shadows;
@@ -2927,8 +2935,10 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
       dummy.rotation.set(0, 0, 0); dummy.position.set(l.x, 1.1 + (l.top - 1.1) * e, l.z); dummy.scale.set(0.8, 1.5, 0.8); dummy.updateMatrix(); cabs.setMatrixAt(i, dummy.matrix);
     });
     cabs.instanceMatrix.needsUpdate = true;
+    rollMover(cabMover, tick);
   };
   scene.add(cabs);
+  const cabMover = mover(cabs.instanceMatrix.array, cabs.instanceMatrix, 16, 5);
   { // the underground entrances' stairs, painted into their insets
     const steps = new InstancedMesh(new PlaneGeometry(1, 1).rotateX(-Math.PI / 2), new MeshBasicMaterial({ map: stairsTexture(), polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 }), Math.max(1, plan.subways.length));
     plan.subways.forEach((s, i) => { dummy.rotation.set(0, s.rotY, 0); dummy.position.set(s.x, 0.29, s.z); dummy.scale.set(1.7, 1, 4.4); dummy.updateMatrix(); steps.setMatrixAt(i, dummy.matrix); });
@@ -2938,6 +2948,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   }
   const railP = new Vector3(), railT = new Vector3();
   const RAIL_HEAD = new Color('#fff4d6'), RAIL_TAIL = new Color('#ff3b2f');
+  const trainMovers = [mover(cars3.instanceMatrix.array, cars3.instanceMatrix, 16, 5), mover(glass3.instanceMatrix.array, glass3.instanceMatrix, 16, 5), mover(trainLights.arr, trainLights.g.getAttribute('position') as BufferAttribute, 3, 5)];
   const runTrains = () => {
     trains.forEach((t, ti) => {
       if (t.dwell > 0) { t.dwell -= 1; if (t.dwell === 0) t.since = 0; }
@@ -2972,6 +2983,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     cars3.instanceMatrix.needsUpdate = true; glass3.instanceMatrix.needsUpdate = true;
     (trainLights.g.getAttribute('position') as BufferAttribute).needsUpdate = true;
     (trainLights.g.getAttribute('color') as BufferAttribute).needsUpdate = true;
+    for (const m of trainMovers) rollMover(m, tick);
   };
   {
     const g = new BufferGeometry();
@@ -3141,6 +3153,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
       (brake ? BRAKE : TAIL).toArray(tails.col!, j);
     }
   };
+  const carMovers = [mover(carMesh.instanceMatrix.array, carMesh.instanceMatrix, 16, 5), mover(throws.instanceMatrix.array, throws.instanceMatrix, 16, 5), mover(heads.arr, heads.pts.geometry.getAttribute('position') as BufferAttribute, 3, 5), mover(tails.arr, tails.pts.geometry.getAttribute('position') as BufferAttribute, 3, 5), mover(hulls.instanceMatrix.array, hulls.instanceMatrix, 16, 5), mover(cabins.instanceMatrix.array, cabins.instanceMatrix, 16, 5), mover(cabinWin.instanceMatrix.array, cabinWin.instanceMatrix, 16, 5), mover(boatLights.arr, boatLights.g.getAttribute('position') as BufferAttribute, 3, 5)];
   const driveCars = () => {
     traffic.step();
     for (let i = 0; i < cars.length; i++) {
@@ -3176,6 +3189,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     (heads.pts.geometry.getAttribute('position') as BufferAttribute).needsUpdate = true;
     (tails.pts.geometry.getAttribute('position') as BufferAttribute).needsUpdate = true;
     (tails.pts.geometry.getAttribute('color') as BufferAttribute).needsUpdate = true;
+    for (const m of carMovers) rollMover(m, tick);
   };
 
   // -- TRAFFIC LIGHTS (owner: the vehicles stopped for nothing — the lights lived in the simulation alone): at
@@ -3572,6 +3586,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   const sparks = new Points(sparkGeo, new PointsMaterial({ vertexColors: true, size: 0.42, sizeAttenuation: true, transparent: true, blending: AdditiveBlending, depthWrite: false }));
   sparks.frustumCulled = false; // the ring's bounds never update: culled by its first (empty) bounds it would vanish whenever the origin left the view
   scene.add(sparks);
+  const runnerMovers = [mover(rPos, runnerGeo.getAttribute('aPos') as InstancedBufferAttribute, 3, 4), mover(runners.trail.pos, sparkGeo.getAttribute('position') as BufferAttribute, 3, 4)];
   const runRoofs = () => {
     runners.step();
     for (let i = 0; i < RUNNERS; i++) {
@@ -3584,7 +3599,9 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     (runnerGeo.getAttribute('aYaw') as InstancedBufferAttribute).needsUpdate = true;
     (sparkGeo.getAttribute('position') as BufferAttribute).needsUpdate = true;
     (sparkGeo.getAttribute('color') as BufferAttribute).needsUpdate = true;
+    for (const m of runnerMovers) rollMover(m, tick);
   };
+  const peopleMover = mover(pPos, peopleGeo.getAttribute('aPos') as InstancedBufferAttribute, 3, 2);
   const walkPeople = () => {
     people.step();
     for (let i = 0; i < PEOPLE; i++) {
@@ -3596,6 +3613,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     (peopleGeo.getAttribute('aPos') as InstancedBufferAttribute).needsUpdate = true;
     (peopleGeo.getAttribute('aFrame') as InstancedBufferAttribute).needsUpdate = true;
     (peopleGeo.getAttribute('aYaw') as InstancedBufferAttribute).needsUpdate = true;
+    rollMover(peopleMover, tick);
   };
 
   interface Flock { x: number; y: number; z: number; vx: number; vz: number; phase: number }
@@ -3614,6 +3632,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     f.vx = Math.cos(back) * sp; f.vz = Math.sin(back) * sp; f.phase = rand() * 7;
   };
   for (let i = 0; i < 2; i++) { const f = { x: 0, y: 0, z: 0, vx: 0, vz: 0, phase: 0 }; launchFlock(f); f.x *= rand(); f.z *= rand(); flocks.push(f); }
+  const birdMover = mover(birdArr, birdGeo.getAttribute('position') as BufferAttribute, 3, 8);
   const fly = () => {
     flocks.forEach((f, fi) => {
       f.x += f.vx; f.z += f.vz; f.phase += 0.09;
@@ -3628,6 +3647,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
       }
     });
     (birdGeo.getAttribute('position') as BufferAttribute).needsUpdate = true;
+    rollMover(birdMover, tick);
   };
   const craftArr = new Float32Array(2 * 3);
   const craft = [{ x: -700, z: 380, vx: 0.42, vz: -0.1 }, { x: 600, z: -520, vx: -0.3, vz: 0.28 }];
@@ -3635,6 +3655,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   craftGeo.setAttribute('position', new BufferAttribute(craftArr, 3));
   const craftMat = new PointsMaterial({ color: '#ff8a8a', size: 3, sizeAttenuation: false, transparent: true, depthWrite: false, fog: false });
   scene.add(new Points(craftGeo, craftMat));
+  const craftMover = mover(craftArr, craftGeo.getAttribute('position') as BufferAttribute, 3, 20);
   const cruiseCraft = () => {
     craft.forEach((c, i) => {
       c.x += c.vx; c.z += c.vz;
@@ -3642,6 +3663,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
       craftArr[i * 3] = c.x; craftArr[i * 3 + 1] = 250 + i * 30; craftArr[i * 3 + 2] = c.z;
     });
     (craftGeo.getAttribute('position') as BufferAttribute).needsUpdate = true;
+    rollMover(craftMover, tick);
   };
 
   // -- THE AIR (owner: flying vehicles): spinners on the plan's corridors —
@@ -3744,6 +3766,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     policeBeams.push(g);
   }
   const airTmp = new Vector3();
+  const airMovers = [mover(airBody.instanceMatrix.array, airBody.instanceMatrix, 16, 8), mover(airCabin.instanceMatrix.array, airCabin.instanceMatrix, 16, 8), mover(airLights.arr, airLights.g.getAttribute('position') as BufferAttribute, 3, 8)];
   const flyAir = () => {
     let bi = 0;
     for (let i = 0; i < FLYERS; i++) {
@@ -3820,6 +3843,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     airCabin.instanceMatrix.needsUpdate = true;
     (airLights.g.getAttribute('position') as BufferAttribute).needsUpdate = true;
     (airLights.g.getAttribute('color') as BufferAttribute).needsUpdate = true;
+    for (const m of airMovers) rollMover(m, tick);
   };
 
   // -- flight ---------------------------------------------------------------
@@ -3829,6 +3853,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   let target = 0;
   let sm = 0;
   let tick = 0;
+  let acc = 0, stepCost = 0; // the world's clock (city-clock.ts): the time owed, a step's cost — declared here, before the first fit() renders
   let bank = 0;
   let autoRamp = 0; // AUTO's ease-in: the flight's pace and the pan's ceilings rise from a tenth to full over 150 frames (owner: no sudden movement at the start)
   const keys = new Set<string>();
@@ -3938,8 +3963,9 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     renderer.shadowMap.needsUpdate = true;
     shadowPrimed = true;
   };
-  const render = () => {
+  const render = (alpha?: number) => { // (alpha: the debug tick's 1 — the latest step, not the blend)
     const tRender = performance.now();
+    renderer.info.reset();
     if (mode === 'free') {
       applyFree();
     } else if (mode === 'auto' && flight) {
@@ -3997,6 +4023,9 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
       camera.lookAt(lx, ly, lz);
     }
     sky.position.copy(camera.position); // the dome is a skybox: infinitely far in every direction
+    const T = alpha === undefined ? renderTime(tick, acc) : tick + alpha; // the frame's time in steps: the movers are shown between their last two
+    for (const { m, attr } of movers) { blendMover(m, T); attr.needsUpdate = true; }
+    farTime.value = T / 60; // the far fleet's clock: the same time (it drives on, calm or not)
     tendLook();
     aimMoon();
     tendLights();
@@ -4239,7 +4268,6 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   let peopleSlow = false, peopleCost = 0;
   const tickWorld = () => {
     tick += 1;
-    farTime.value += 1 / 60; // the far traffic drives on, calm or not (a sim, not an idle motion)
     for (const m of farMats) m.uniforms.uLamps.value = lampLevel;
     // CALM slows the city rather than stopping it (owner: "the whole city frozen" — calm had stilled every vehicle and
     // walker): the flicker, the sweep, the twinkle and the breathing are stilled; the traffic, the people, the trains,
@@ -4320,7 +4348,6 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
   let frames = 0, spent = 0;
   // THE WORLD'S CLOCK (owner: slow motion and lag on a phone; city-clock.ts): the sims step at 60 Hz by an accumulator
   // of real time, at most three steps a frame and at most what a step's cost allows; the rigs advance by the frame
-  let acc = 0, stepCost = 0;
   let lastChange = performance.now() + 3000;
   let ceiling = TIERS.length - 1; // a tier that ran long is closed for the session (the ladder used to climb back into it every dozen seconds)
   const loop = () => {
@@ -4389,7 +4416,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
       snapLights = true;
       render();
     },
-    tick: (n = 1) => { for (let i = 0; i < n; i++) { tickWorld(); render(); } },
+    tick: (n = 1) => { for (let i = 0; i < n; i++) { tickWorld(); render(1); } },
     scene: () => scene,
     setSamples: (n) => { for (const t of [composer.renderTarget1, composer.renderTarget2]) { t.samples = n; t.dispose(); } render(); },
     grab: (x = 0, y = 0, w = 64, h = 64) => { // (read straight after a render, in the same task: the buffer is still there)
@@ -4405,6 +4432,7 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     },
     quality: () => ({ tier: TIERS[tier].label, far: camera.far, fog: fog.density, shadows: renderer.shadowMap.enabled && moonLight.shadow.intensity > 0, pix: PIX, scale: isMobile() ? phoneScale : deskScale(), render: [renderer.domElement.width, renderer.domElement.height] }),
     timings: () => ({ ...timing }),
+    info: () => ({ calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, points: renderer.info.render.points, lines: renderer.info.render.lines, geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures, programs: renderer.info.programs?.length ?? 0 }),
     shimmer: (steps = 6, slide = 0.04) => { // how much a patch at the frame's centre changes as the eye slides sideways a hair: a jitter metric (0 = stable)
       const gl = renderer.getContext();
       renderer.setSize(640, 360, false); composer.setSize(640, 360); // a fixed frame, whatever the pane's size (a hidden pane is 0 × 0)

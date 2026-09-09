@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { frameScale, MAX_STEPS, owed, STEP, stepsAllowed } from '../src/about/city-clock';
+import { blendMover, frameScale, MAX_STEPS, newMover, owed, renderTime, rollMover, STEP, stepsAllowed } from '../src/about/city-clock';
 
 /** Runs `frames` frames of `dt` ms with a step costing `cost` ms; returns the steps run. */
 const run = (frames: number, dt: number, cost: number) => {
@@ -40,5 +40,64 @@ describe("The world's clock (owner: slow motion on a phone; a 120 Hz desktop ran
     expect(frameScale(1000 / 30)).toBeCloseTo(2, 9);
     expect(frameScale(2000)).toBe(3);
     expect(frameScale(-1)).toBe(0);
+  });
+});
+
+describe('The render between the steps (owner: every lane jittered — a 120 Hz desktop stepped the sims on alternate frames)', () => {
+  /** A point the sim moves one unit a step (every `cadence` steps), rendered by a stream of frames of `dts` ms: the rendered x each frame, the steps each frame. */
+  const stream = (dts: number[], cadence = 1) => {
+    const arr = new Float32Array(3), m = newMover(arr, 3, 5);
+    let acc = 0, tick = 0;
+    const xs: number[] = [], steps: number[] = [];
+    for (const dt of dts) {
+      acc = owed(acc, dt);
+      const n = stepsAllowed(acc, 2);
+      for (let i = 0; i < n; i++) { tick += 1; if (tick % cadence === 0) { arr[0] = tick; rollMover(m, tick); } }
+      acc -= n * STEP;
+      blendMover(m, renderTime(tick, acc));
+      xs.push(arr[0]); steps.push(n);
+    }
+    return { xs, steps };
+  };
+  const deltas = (xs: number[]) => xs.slice(1).map((x, i) => x - xs[i]);
+  it('at 120 Hz the sims step on alternate frames and the render advances half a step every frame', () => {
+    const { xs, steps } = stream(new Array(240).fill(1000 / 120));
+    expect(steps.filter((n) => n === 0).length).toBeGreaterThan(100);
+    const d = deltas(xs).slice(4);
+    expect(Math.min(...d)).toBeGreaterThan(0.45);
+    expect(Math.max(...d)).toBeLessThan(0.55);
+  });
+  it('a jittered 60 Hz (16.2 / 17.1 ms) advances within a tenth of a step a frame', () => {
+    const { xs } = stream(new Array(120).fill(0).map((_, i) => (i % 2 ? 17.1 : 16.2)));
+    const d = deltas(xs).slice(4);
+    expect(Math.min(...d)).toBeGreaterThan(0.9);
+    expect(Math.max(...d)).toBeLessThan(1.1);
+  });
+  it('a buffer written every other step blends over two', () => {
+    const { xs } = stream(new Array(60).fill(1000 / 60), 2);
+    const d = deltas(xs).slice(6);
+    expect(Math.min(...d)).toBeGreaterThan(0.9);
+    expect(Math.max(...d)).toBeLessThan(1.1);
+  });
+  it('a jump past the snap goes straight to the new place; a stopped item stays; a matrix blends whole', () => {
+    const arr = new Float32Array(32), m = newMover(arr, 16, 5);
+    arr.set([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 100, 0, 0, 1], 0); arr.set([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 7, 0, 0, 1], 16);
+    rollMover(m, 1);
+    arr[12] = 300; arr[28] = 7; arr[0] = 2;
+    rollMover(m, 2);
+    expect(blendMover(m, 2.5)).toBeCloseTo(0.5, 9);
+    expect(arr[12]).toBe(300);
+    expect(arr[0]).toBe(2);
+    expect(arr[28]).toBe(7);
+    arr[12] = 302; rollMover(m, 3); blendMover(m, 3.25);
+    expect(arr[12]).toBeCloseTo(300.5, 6);
+    expect(arr[0]).toBe(2);
+  });
+  it('the first frames show the start', () => {
+    const arr = new Float32Array([4, 5, 6]), m = newMover(arr, 3, 5);
+    blendMover(m, 0.7);
+    expect(Array.from(arr)).toEqual([4, 5, 6]);
+    expect(renderTime(3, STEP * 0.25)).toBeCloseTo(3.25, 9);
+    expect(renderTime(3, STEP * 4)).toBe(4);
   });
 });
