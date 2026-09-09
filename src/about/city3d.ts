@@ -50,6 +50,7 @@ import { CAST, People, Zone, marketZones } from './city-people';
 import { Runners } from './city-runners';
 import { blendMover, frameScale, newMover, owed, renderTime, rollMover, STEP, stepsAllowed } from './city-clock';
 import type { Mover } from './city-clock';
+import { BEACON, beaconAlpha, glowSet, puffAdvance, puffPose } from './city-puffs';
 import { farMasses, mergeBoxes } from './city-far';
 import { blendLooks, ease, horizonColor, lerpHex, Look as SkyLook, LOOKS as SKY, paintSky, TimeOfDay } from './city-sky';
 import { armReach, convexHull, DECK_KERB, SPEC, throughReach, Traffic } from './city-traffic';
@@ -821,6 +822,19 @@ function glyphTexture(rand: () => number, w: number, h: number, n: number, verti
   return asPixelTex(new CanvasTexture(c));
 }
 
+/** A glow as an instanced billboard (owner: a thousand sprites were a thousand draw calls): the instance's translation
+ *  and scale kept, the quad laid across the view; the tint in the instance colour, the fade in the instanced aAlpha. */
+function billboardMaterial(map: CanvasTexture): MeshBasicMaterial {
+  const mat = new MeshBasicMaterial({ map, transparent: true, depthWrite: false });
+  mat.onBeforeCompile = (shader: WebGLProgramParametersWithUniforms) => {
+    shader.uniforms.uBeyond = uBeyond;
+    shader.vertexShader = 'attribute float aAlpha;\nvarying float vAlpha;\n' + shader.vertexShader
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvAlpha = aAlpha;')
+      .replace('#include <project_vertex>', 'vec4 mvPosition = modelViewMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);\nmvPosition.xy += transformed.xy * vec2(length(instanceMatrix[0].xyz), length(instanceMatrix[1].xyz));\ngl_Position = projectionMatrix * mvPosition;');
+    shader.fragmentShader = 'varying float vAlpha;\n' + shader.fragmentShader.replace('#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.a *= vAlpha;');
+  };
+  return mat;
+}
 function glowTexture(color: string, soft = false): CanvasTexture {
   const c = document.createElement('canvas');
   const S = soft ? 64 : 32, h = S / 2;
@@ -3007,40 +3021,33 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     for (const inst of [shafts, crossarms, trafos]) { inst.instanceMatrix.needsUpdate = true; inst.castShadow = true; scene.add(inst); }
   }
   // (the sprawl's neon specks are no longer drawn: the endless city's tiles stand where its boxes stood)
-  const beacons: Sprite[] = [];
-  for (const b of plan.beacons) {
-    const s = new Sprite(new SpriteMaterial({ map: glowTexture('#FF2E63'), transparent: true, fog: false, depthWrite: false }));
-    s.position.set(b.x, b.y, b.z);
-    s.scale.set(3.2, 3.2, 1);
-    beacons.push(s);
-    scene.add(s);
-  }
-  // smoke over the stacks, steam from the vents: sprites cycling upward
-  interface Puff { s: Sprite; x: number; y0: number; z: number; t: number; rise: number; drift: number; base: number }
-  const puffs: Puff[] = [];
-  const puffMat = (color: string) => new SpriteMaterial({ map: glowTexture(color), transparent: true, opacity: 0.2, depthWrite: false });
-  for (const st of plan.stacks) {
-    for (let i = 0; i < 6; i++) {
-      const s = new Sprite(puffMat('#8a8fa8'));
-      scene.add(s);
-      puffs.push({ s, x: st.x, y0: st.top + 0.5, z: st.z, t: i / 6, rise: 26, drift: 9, base: 5 });
-    }
-  }
-  for (const v of plan.vents) {
-    for (let i = 0; i < 3; i++) {
-      const s = new Sprite(puffMat('#c8d0e8'));
-      scene.add(s);
-      puffs.push({ s, x: v.x, y0: 0.4, z: v.z, t: i / 3, rise: 7, drift: 1.2, base: 1.6 });
-    }
-  }
-  const breathe = () => {
-    for (const p of puffs) {
-      p.t = (p.t + 0.006) % 1;
-      p.s.position.set(p.x + p.drift * p.t, p.y0 + p.rise * p.t, p.z);
-      const sc = p.base * (0.6 + p.t * 2.2);
-      p.s.scale.set(sc, sc, 1);
-      (p.s.material as SpriteMaterial).opacity = 0.22 * (1 - p.t);
-    }
+  // THE GLOWS (owner: a weak PC stuttered): the towers' beacons, the smoke over the stacks and the steam from the vents
+  // were a thousand sprites — a draw call and a material each; they are one instanced mesh of billboards (city-puffs.ts
+  // has their set and their cycle): the tint in the instance colour, the fade in aAlpha
+  const glowSpecs = glowSet(plan.stacks, plan.vents, plan.beacons);
+  const NPUFF = glowSpecs.puffs.length, NGLOW = NPUFF + glowSpecs.beacons.length;
+  const glowGeo = new PlaneGeometry(1, 1);
+  const glowAlpha = new InstancedBufferAttribute(new Float32Array(NGLOW), 1);
+  glowGeo.setAttribute('aAlpha', glowAlpha);
+  const glows = new InstancedMesh(glowGeo, billboardMaterial(glowTexture('#ffffff')), NGLOW);
+  glows.frustumCulled = false;
+  const glowTint = new Color();
+  glowSpecs.puffs.forEach((p, i) => glows.setColorAt(i, glowTint.set(p.tint)));
+  glowSpecs.beacons.forEach((b, i) => {
+    dummy.rotation.set(0, 0, 0); dummy.position.set(b.x, b.y, b.z); dummy.scale.set(BEACON.size, BEACON.size, 1); dummy.updateMatrix();
+    glows.setMatrixAt(NPUFF + i, dummy.matrix); glows.setColorAt(NPUFF + i, glowTint.set(BEACON.tint)); glowAlpha.array[NPUFF + i] = 0.12;
+  });
+  if (glows.instanceColor) glows.instanceColor.needsUpdate = true;
+  scene.add(glows);
+  const breathe = () => { // smoke over the stacks, steam from the vents: the puffs cycle upward (calm stills them)
+    dummy.rotation.set(0, 0, 0);
+    glowSpecs.puffs.forEach((p, i) => {
+      p.t = puffAdvance(p.t);
+      const q = puffPose(p, p.t);
+      dummy.position.set(q.x, q.y, q.z); dummy.scale.set(q.size, q.size, 1); dummy.updateMatrix();
+      glows.setMatrixAt(i, dummy.matrix); glowAlpha.array[i] = q.alpha;
+    });
+    glows.instanceMatrix.needsUpdate = true; glowAlpha.needsUpdate = true;
   };
 
   // -- LIVELY STREETS: a real traffic network (city-traffic.ts) — lanes,
@@ -4277,9 +4284,8 @@ export function mountCity3D(canvas: HTMLCanvasElement, seed: number): CityRide {
     sweep();
     (starsA.material as PointsMaterial).opacity = (0.7 + Math.sin(tick * 0.05) * 0.3) * starLevel;
     (starsB.material as PointsMaterial).opacity = (0.55 + Math.cos(tick * 0.033) * 0.35) * starLevel;
-    for (let i = 0; i < beacons.length; i++) {
-      (beacons[i].material as SpriteMaterial).opacity = ((tick >> 4) + i) % 2 ? 0.95 : 0.12;
-    }
+    for (let i = 0; i < glowSpecs.beacons.length; i++) glowAlpha.array[NPUFF + i] = beaconAlpha(tick, i);
+    glowAlpha.needsUpdate = true;
     if (tick % 6 === 0) {
       for (const s of screens) { paintScreen(s.ctx, rand); s.tex.needsUpdate = true; }
       flicker();
