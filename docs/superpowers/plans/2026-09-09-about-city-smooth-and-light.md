@@ -27,7 +27,7 @@
 **Interfaces:**
 - Produces: `interface Mover { arr; prev; cur; prevStep; curStep; stride; at; snap }`, `newMover(arr: Float32Array, stride: number, snap: number): Mover`, `rollMover(m: Mover, step: number): void`, `renderTime(tick: number, acc: number): number`, `blendMover(m: Mover, T: number): number` (returns the blend used).
 
-- [ ] **Step 1: Write the failing tests** (append to `tests/city-clock.test.ts`; add `blendMover, newMover, renderTime, rollMover` to the import)
+- [x] **Step 1: Write the failing tests** (append to `tests/city-clock.test.ts`; add `blendMover, newMover, renderTime, rollMover` to the import)
 
 ```ts
 describe('The render between the steps (owner: every lane jittered — a 120 Hz desktop stepped the sims on alternate frames)', () => {
@@ -90,9 +90,9 @@ describe('The render between the steps (owner: every lane jittered — a 120 Hz 
 });
 ```
 
-- [ ] **Step 2: Run to verify they fail** — `npx vitest run tests/city-clock.test.ts` → FAIL (`newMover` is not exported).
+- [x] **Step 2: Run to verify they fail** — `npx vitest run tests/city-clock.test.ts` → FAIL (`newMover` is not exported).
 
-- [ ] **Step 3: Implement** (append to `src/about/city-clock.ts`)
+- [x] **Step 3: Implement** (append to `src/about/city-clock.ts`)
 
 ```ts
 /** A buffer a sim writes for the GPU, shown between its last two states (owner: every lane jittered — on a 120 Hz
@@ -132,8 +132,8 @@ export function blendMover(m: Mover, T: number): number {
 }
 ```
 
-- [ ] **Step 4: Run** — `npx vitest run tests/city-clock.test.ts` → PASS (9 tests).
-- [ ] **Step 5: Commit** — `git add src/about/city-clock.ts tests/city-clock.test.ts && git commit -m "feat(about): the movers — a sim's buffer shown between its last two steps"`
+- [x] **Step 4: Run** — `npx vitest run tests/city-clock.test.ts` → PASS (9 tests).
+- [x] **Step 5: Commit** — `git add src/about/city-clock.ts tests/city-clock.test.ts && git commit -m "feat(about): the movers — a sim's buffer shown between its last two steps"`
 
 ---
 
@@ -145,7 +145,7 @@ export function blendMover(m: Mover, T: number): number {
 **Interfaces:**
 - Consumes: Task 1's `newMover`, `rollMover`, `blendMover`, `renderTime`.
 
-- [ ] **Step 1: The registry and the clock's state beside `tick`** — replace `  let tick = 0;` with
+- [x] **Step 1: The registry and the clock's state beside `tick`** — replace `  let tick = 0;` with
 
 ```ts
   let tick = 0;
@@ -156,7 +156,7 @@ export function blendMover(m: Mover, T: number): number {
 ```
 and delete the later `let acc = 0, stepCost = 0;` beside the loop. Import `Mover, blendMover, newMover, renderTime, rollMover` from `./city-clock`.
 
-- [ ] **Step 2: Register and roll.** The drivers are declared before `tick`; they only run after it. Registrations go right before each driver (the meshes exist by then), rolls at the driver's end:
+- [x] **Step 2: Register and roll.** The drivers are declared before `tick`; they only run after it. Registrations go right before each driver (the meshes exist by then), rolls at the driver's end:
 
 | driver | movers (stride, snap) | roll |
 |---|---|---|
@@ -171,7 +171,7 @@ and delete the later `let acc = 0, stepCost = 0;` beside the loop. Import `Mover
 
 The roll: `for (const m of carMovers) rollMover(m, tick);` where `const carMovers = [mover(...), ...]` is declared just above the driver. Because `mover()` is declared beside `tick` (after the drivers' code), the registrations must be written as `let carMovers: Mover[]` filled lazily on the driver's first run: `if (!carMovers) carMovers = [...]` — or, simpler, declare the registry (`movers`, `mover`) near the top of `createCity` right after `const calm = reducedMotion();`, where every driver can reach it, and leave only `acc`/`stepCost` beside `tick`. Do the latter.
 
-- [ ] **Step 3: The blend in `render()`** — after `sky.position.copy(camera.position);` insert
+- [x] **Step 3: The blend in `render()`** — after `sky.position.copy(camera.position);` insert
 
 ```ts
     const T = alpha === undefined ? renderTime(tick, acc) : tick + alpha;
@@ -180,8 +180,8 @@ The roll: `for (const m of carMovers) rollMover(m, tick);` where `const carMover
 ```
 with the signature `const render = (alpha?: number) => {`; delete `farTime.value += 1 / 60;` from `tickWorld`; the debug `tick: (n = 1) => { for (...) { tickWorld(); render(1); } }`.
 
-- [ ] **Step 4: Gates** — `npx tsc --noEmit`; the pane: reload `about.html`, `rvlRide.tick(60)`, `rvlRide.probe().cars` unchanged, no console error; a screenshot at the tour's pose matches the previous look.
-- [ ] **Step 5: Commit** — `git commit -am "feat(about): the sims shown between their steps — no jitter at 120 Hz"`
+- [x] **Step 4: Gates** — `npx tsc --noEmit`; the pane: reload `about.html`, `rvlRide.tick(60)`, `rvlRide.probe().cars` unchanged, no console error; a screenshot at the tour's pose matches the previous look.
+- [x] **Step 5: Commit** — `git commit -am "feat(about): the sims shown between their steps — no jitter at 120 Hz"`
 
 ---
 
@@ -194,7 +194,7 @@ with the signature `const render = (alpha?: number) => {`; delete `farTime.value
 **Interfaces:**
 - Produces: `PUFF_RATE`, `STACK_PUFFS`, `VENT_PUFFS`, `STACK`, `VENT`, `BEACON`, `interface Puff { x; y0; z; rise; drift; base; tint; t }`, `glowSet(stacks, vents, beacons): { puffs: Puff[]; beacons: { x; y; z }[] }`, `puffPose(p, t)`, `puffAdvance(t)`, `beaconAlpha(tick, i)`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 import { describe, expect, it } from 'vitest';
@@ -232,9 +232,9 @@ describe('The glows (owner: a weak PC stuttered — a thousand smoke and steam s
 });
 ```
 
-- [ ] **Step 2: Run to verify they fail** — `npx vitest run tests/city-puffs.test.ts` → FAIL (module not found).
+- [x] **Step 2: Run to verify they fail** — `npx vitest run tests/city-puffs.test.ts` → FAIL (module not found).
 
-- [ ] **Step 3: Implement** `src/about/city-puffs.ts`
+- [x] **Step 3: Implement** `src/about/city-puffs.ts`
 
 ```ts
 /** THE GLOWS (owner: a weak PC stuttered): the smoke over the stacks, the steam from the vents and the towers' beacons
@@ -262,8 +262,8 @@ export const puffAdvance = (t: number): number => (t + PUFF_RATE) % 1;
 export const beaconAlpha = (tick: number, i: number): number => (((tick >> 4) + i) % 2 ? 0.95 : 0.12);
 ```
 
-- [ ] **Step 4: Run** — PASS (3 tests).
-- [ ] **Step 5: Commit** — `git add src/about/city-puffs.ts tests/city-puffs.test.ts && git commit -m "feat(about): the glows' cycle, pure"`
+- [x] **Step 4: Run** — PASS (3 tests).
+- [x] **Step 5: Commit** — `git add src/about/city-puffs.ts tests/city-puffs.test.ts && git commit -m "feat(about): the glows' cycle, pure"`
 
 ---
 
@@ -272,7 +272,7 @@ export const beaconAlpha = (tick: number, i: number): number => (((tick >> 4) + 
 **Files:**
 - Modify: `src/about/city3d.ts` — the beacons and puffs block (`const beacons: Sprite[] = []` … `breathe`), the beacons' blink in `tickWorld`.
 
-- [ ] **Step 1: The billboard material** (a function beside `glowTexture`):
+- [x] **Step 1: The billboard material** (a function beside `glowTexture`):
 
 ```ts
 /** A glow as an instanced billboard: the instance's translation and scale kept, the quad laid across the view; the tint
@@ -290,7 +290,7 @@ function billboardMaterial(map: Texture): MeshBasicMaterial {
 }
 ```
 
-- [ ] **Step 2: The mesh** — replace the beacons' and puffs' blocks with
+- [x] **Step 2: The mesh** — replace the beacons' and puffs' blocks with
 
 ```ts
   const glowSpecs = glowSet(plan.stacks, plan.vents, plan.beacons);
@@ -321,8 +321,8 @@ function billboardMaterial(map: Texture): MeshBasicMaterial {
 ```
 and in `tickWorld` replace the beacons' loop with `for (let i = 0; i < glowSpecs.beacons.length; i++) glowAlpha.array[NPUFF + i] = beaconAlpha(tick, i);` followed by `glowAlpha.needsUpdate = true;`. Imports: `BEACON, beaconAlpha, glowSet, puffAdvance, puffPose` from `./city-puffs`; `InstancedBufferAttribute` and `Texture` from three if not yet imported. Remove the `Puff` interface, `puffMat`, `beacons`.
 
-- [ ] **Step 3: Gates and the pane** — tsc; reload; `rvlRide.info().calls` at the tour's pose ~1,100 → ~110 (desktop 1280 × 720, `setQuality(2)`); warp to a stack (`plan.stacks[0]`: read `rvlRide.probe()` has none — use the pane: `warp(x, top + 10, z + 40, 0, -0.2)` for the first stack found by `scene()` traversal is not available; instead warp to a vent-rich street and screenshot) — the smoke reads as before; `tick(20)` twice and two screenshots: the beacons differ (blink).
-- [ ] **Step 4: Commit** — `git commit -am "feat(about): the smoke, the steam and the beacons as one mesh — a thousand draw calls fewer"`
+- [x] **Step 3: Gates and the pane** — tsc; reload; `rvlRide.info().calls` at the tour's pose ~1,100 → ~110 (desktop 1280 × 720, `setQuality(2)`); warp to a stack (`plan.stacks[0]`: read `rvlRide.probe()` has none — use the pane: `warp(x, top + 10, z + 40, 0, -0.2)` for the first stack found by `scene()` traversal is not available; instead warp to a vent-rich street and screenshot) — the smoke reads as before; `tick(20)` twice and two screenshots: the beacons differ (blink).
+- [x] **Step 4: Commit** — `git commit -am "feat(about): the smoke, the steam and the beacons as one mesh — a thousand draw calls fewer"`
 
 ---
 
@@ -335,7 +335,7 @@ and in `tickWorld` replace the beacons' loop with `for (let i = 0; i < glowSpecs
 **Interfaces:**
 - Produces: `interface Tier { label; far; fog; shadows; pix; lights; lod: [number, number] }`, `TIERS: Tier[]`, `PHONE = { lod: [20, 40], lights: [0, 4], floor: 0.6 }`, `startTier(dev: Device, mobile: boolean): number`, `interface Governor { tier; scale; ceiling; floor; until; lastChange; lastDown }`, `newGovernor(tier, now, floor?)`, `steer(g, avg, busy, now): Steer`, `SLOW = 20`, `FAST = 17.5`, `BUSY = 9`, `WINDOW = 90`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 import { describe, expect, it } from 'vitest';
@@ -395,9 +395,9 @@ describe("The governor (owner: other people's PCs stutter; the phone lags)", () 
 });
 ```
 
-- [ ] **Step 2: Run to verify they fail** — module not found.
+- [x] **Step 2: Run to verify they fail** — module not found.
 
-- [ ] **Step 3: Implement** `src/about/city-governor.ts`
+- [x] **Step 3: Implement** `src/about/city-governor.ts`
 
 ```ts
 /** QUALITY (owner: a render distance that adapts; then "on other people's devices it stutters, on mobile it's very
@@ -444,8 +444,8 @@ export function steer(g: Governor, avg: number, busy: number, now: number): Stee
 ```
 (The test's fourth case counts twelve seconds from the last *down* — the scale-down at 21,200 — so the scale-up lands at 33,200 or later: write the test's times accordingly: `23300 → null`, then `33300 → 'scale-up'`, `35400 → 'scale-up'`, `37500 → null`.)
 
-- [ ] **Step 4: Run** — PASS (5 tests).
-- [ ] **Step 5: Commit** — `git add src/about/city-governor.ts tests/city-governor.test.ts && git commit -m "feat(about): the governor — the tiers table, the opening tier, the steering, pure"`
+- [x] **Step 4: Run** — PASS (5 tests).
+- [x] **Step 5: Commit** — `git add src/about/city-governor.ts tests/city-governor.test.ts && git commit -m "feat(about): the governor — the tiers table, the opening tier, the steering, pure"`
 
 ---
 
@@ -454,7 +454,7 @@ export function steer(g: Governor, avg: number, busy: number, now: number): Stee
 **Files:**
 - Modify: `src/about/city3d.ts` — delete the local `Tier`/`TIERS`/`startTier`; import `PHONE, TIERS, newGovernor, startTier, steer, WINDOW` from `./city-governor`; `let tier = startTier(navigator as Device, isMobile())`; `const gov = newGovernor(tier, performance.now(), 0.6)` beside it; `deskScale = () => Math.min(dpr, 2) / PIX * gov.scale`; the phone's scale `phoneCeil * gov.scale` (delete `phoneScale`, `phoneRenderSum`, the phone block in `tickWorld`); `POOL` → `TIERS[t].lights` / `PHONE.lights[t]` in `setPool` calls; the far LOD built at both densities gated by tier; the loop's ladder → `steer`; `setQuality` sets the governor.
 
-- [ ] **Step 1: The far LOD by density** — replace the `build` gating and the two device lines with
+- [x] **Step 1: The far LOD by density** — replace the `build` gating and the two device lines with
 
 ```ts
     const lodGates: { o: Object3D; on: (t: number) => boolean }[] = []; // ring 2's stand-in below high; the dense rings from high, the sparse below (applyTier)
@@ -479,7 +479,7 @@ export function steer(g: Governor, avg: number, busy: number, now: number): Stee
 ```
 and in `applyTier`: `for (const g of lodGates) g.o.visible = g.on(tier);` (replacing the `lod2` line); `setPool(isMobile() ? PHONE.lights[tier] : T.lights)`.
 
-- [ ] **Step 2: The loop** — replace the ladder block (`if (now > lastChange && dt < 250) { … }`) and its state (`frames, spent, lastChange, ceiling`) with
+- [x] **Step 2: The loop** — replace the ladder block (`if (now > lastChange && dt < 250) { … }`) and its state (`frames, spent, lastChange, ceiling`) with
 
 ```ts
     if (dt < 250) { // the governor's window (city-governor.ts): the frames' mean interval and the CPU's share
@@ -494,8 +494,8 @@ and in `applyTier`: `for (const g of lodGates) g.o.visible = g.on(tier);` (repla
 ```
 where `stepsMs` is the frame's steps' cost (`steps * stepCost`, 0 when none) — measure the steps before the window's accounting. `setQuality`: `gov.tier = tier; gov.ceiling = tier; gov.scale = 1; gov.until = performance.now() + 30000;`. The context-restored handler sets the same at tier 0.
 
-- [ ] **Step 3: Gates and the pane** — tsc; reload at 1280 × 720: `quality()` reads `high`, scale 1; `setQuality(0)`: `info().triangles` 6.3 M → ~3.7 M; `setQuality(2)`: 8.1 M; the phone preset: ring 2's stand-in at 20 and rings 3–4 at 40 → `info().triangles` 4.1 M → ~3.3 M; lights: `probe().lights.length` 14 at high, 0 at low.
-- [ ] **Step 4: Commit** — `git commit -am "feat(about): the governor wired — a render scale before the tier, sparse far rings below high, no promotion by the connection"`
+- [x] **Step 3: Gates and the pane** — tsc; reload at 1280 × 720: `quality()` reads `high`, scale 1; `setQuality(0)`: `info().triangles` 6.3 M → ~3.7 M; `setQuality(2)`: 8.1 M; the phone preset: ring 2's stand-in at 20 and rings 3–4 at 40 → `info().triangles` 4.1 M → ~3.3 M; lights: `probe().lights.length` 14 at high, 0 at low.
+- [x] **Step 4: Commit** — `git commit -am "feat(about): the governor wired — a render scale before the tier, sparse far rings below high, no promotion by the connection"`
 
 ---
 
@@ -505,7 +505,7 @@ where `stepsMs` is the frame's steps' cost (`steps * stepCost`, 0 when none) —
 - Modify: `src/about/city-post.ts` (`LensPass` takes `cheap`, a `SOFT` define), `src/about/city3d.ts` (no haze pass on a phone, the bloom at half size, the lens cheap).
 - Test: `tests/city-post.test.ts` (new)
 
-- [ ] **Step 1: The failing test**
+- [x] **Step 1: The failing test**
 
 ```ts
 import { describe, expect, it } from 'vitest';
@@ -520,16 +520,16 @@ describe("A phone's lens (owner: mobile is very laggy)", () => {
 });
 ```
 
-- [ ] **Step 2: Implement** — in `LENS_FRAG` wrap the four extra fetches: `#if SOFT\n col = col * 0.4 + 0.15 * (…);\n#endif`; the constructor `opts: { k?; ca?; vig?; soft?; cheap?: boolean }` adds `defines: { SOFT: opts.cheap ? 0 : 1 }`. In city3d: `const phone = isMobile();` then `if (!phone) composer.addPass(haze);`, `const lens = new LensPass(phone ? { cheap: true } : {});`, and after `const bloom = …`: `if (phone) { const full = bloom.setSize.bind(bloom); bloom.setSize = (w, h) => full(Math.ceil(w / 2), Math.ceil(h / 2)); }`.
-- [ ] **Step 3: Gates and the pane** — tsc, vitest; the phone preset renders (a screenshot), no console error; the desktop unchanged.
-- [ ] **Step 4: Commit** — `git commit -am "feat(about): a phone's post chain — no haze pass, the bloom at half size, the lens without softness"`
+- [x] **Step 2: Implement** — in `LENS_FRAG` wrap the four extra fetches: `#if SOFT\n col = col * 0.4 + 0.15 * (…);\n#endif`; the constructor `opts: { k?; ca?; vig?; soft?; cheap?: boolean }` adds `defines: { SOFT: opts.cheap ? 0 : 1 }`. In city3d: `const phone = isMobile();` then `if (!phone) composer.addPass(haze);`, `const lens = new LensPass(phone ? { cheap: true } : {});`, and after `const bloom = …`: `if (phone) { const full = bloom.setSize.bind(bloom); bloom.setSize = (w, h) => full(Math.ceil(w / 2), Math.ceil(h / 2)); }`.
+- [x] **Step 3: Gates and the pane** — tsc, vitest; the phone preset renders (a screenshot), no console error; the desktop unchanged.
+- [x] **Step 4: Commit** — `git commit -am "feat(about): a phone's post chain — no haze pass, the bloom at half size, the lens without softness"`
 
 ---
 
 ### Task 8: Gates, docs, deploy
 
-- [ ] `npx tsc --noEmit`; `npx vitest run` (all green); `npx vite build`.
-- [ ] The pane at 1280 × 720 and the phone preset: `info()` before/after in the spec's "As built"; screenshots of the smoke and the beacons; `tick(60)` runs clean.
-- [ ] Spec "## As built" appended (the measured calls and triangles per tier and device, anything that changed while building); the plan's boxes ticked.
-- [ ] Commit, `git push -q origin master`, `gh run watch --exit-status`, curl the live page and the city chunk for `blendMover`'s work (a `renderTime`-shaped string survives minification poorly — check the chunk hash changed and the page is 200).
-- [ ] Memory bullet in `revachol-portfolio-site.md`.
+- [x] `npx tsc --noEmit`; `npx vitest run` (all green); `npx vite build`.
+- [x] The pane at 1280 × 720 and the phone preset: `info()` before/after in the spec's "As built"; screenshots of the smoke and the beacons; `tick(60)` runs clean.
+- [x] Spec "## As built" appended (the measured calls and triangles per tier and device, anything that changed while building); the plan's boxes ticked.
+- [x] Commit, `git push -q origin master`, `gh run watch --exit-status`, curl the live page and the city chunk for `blendMover`'s work (a `renderTime`-shaped string survives minification poorly — check the chunk hash changed and the page is 200).
+- [x] Memory bullet in `revachol-portfolio-site.md`.

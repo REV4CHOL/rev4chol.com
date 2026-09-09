@@ -51,3 +51,22 @@ The plan, the sims, the tiles, the fog of war and the far horizon; the counts (2
 ## Later
 
 A real phone in hand (the pane's software rasteriser is a stand-in); a Lambert variant of the facade skin for the lowest tier; the people's and traffic's counts by tier.
+
+## As built (2026-09-09)
+
+- **The movers** roll inside each driver (the cars, boats, trains, cabs, walkers, runners and their sparks, birds, aircraft, flyers) and blend in `render(alpha?)`; the debug `tick()` renders at `a = 1`. The clock's state (`acc`, `stepCost`) moved beside `tick` — a `let` after `render()` throws at boot. The far fleet's clock is `T / 60`. The roll costs the traffic's step about half a millisecond on the dev machine (2,647 cars, two matrix buffers and two point buffers).
+- **The glows**: 1,053 sprites became one instanced mesh; five sprites remain (the nebulae, the sun, the moon). The pane counted the sprites in view at the tour's pose at about 840 of the 1,105 calls — more than the 462 of the first estimate.
+- **Two merges the spec did not name**, once the sprites were gone the census showed them: the 73 giant screens (a mesh, a material, a canvas and an upload each, every six ticks) are one mesh over one 256 × 200 atlas, painted and uploaded once; and static furniture is merged by material through `mergeStatic(scene, parts)` — the searchlight mounts' decks, rails, rungs and rings (the yokes and drums keep turning), the stallion's thirty boxes (bronze and stone), and every box added straight to the scene under a plain Lambert (the bridges' pylons, stays, walls, piers and poles, the canal's ends). The rule that makes the last one safe: whatever moves lives in a group or an instanced mesh; a bare Lambert box on the scene is furniture.
+- **The governor** caps a phone's ceiling at `mid`; `PHONE.lights` is indexed safely when the debug `setQuality` forces a higher tier.
+- **Measured** (the pane, 1280 × 720, the tour's opening pose, steady frames; the software rasteriser's tier steps are ignored by forcing tiers):
+
+| tier | draw calls before → after | triangles before → after | real lights |
+|---|---|---|---|
+| ultra | 1,342 → 455 | 8.49 M → 8.12 M | 18 |
+| high | 1,105 → 455 | 8.12 M → 8.12 M | 14 |
+| mid | 1,087 → 437 | 6.26 M → 4.55 M | 8 |
+| low | 1,087 → 437 | 6.26 M → 4.55 M | 0 |
+
+The render's CPU side at `high` (1898 × 1080) on the dev machine: 14.5 ms → 6.4 ms a frame. Plain meshes in the scene 613 → 186 (of which 120 static boxes and 73 screens were merged, 1,053 sprites replaced). The far LOD at `low`/`mid`: rings 3–4 at 24 (1,364 boxes a tile) and rings 5–7 at 40 (611) in place of 12 (4,033) and 24 — 1.7 M triangles fewer.
+- **The phone preset** (375 × 812 at a ratio of 2, the tour's opening pose): draw calls 866 → 381 at `mid` and `low`; triangles 4.10 M → 3.58 M (ring 2's stand-in at 20 over 16 tiles, rings 3–4 at 40 over 56); real lights 4 at `mid`, 0 at `low`; the render's CPU side 7.5 → 2.7 ms at 469 × 1015; the counts 803 / 1,783 / 70 as before. Under the pane's software rasteriser the governor had already shrunk the phone's scale from 1.25 to 0.8 of CSS by the time it was read — the frame-interval steering works on the phone path.
+- **Not done here**: a real phone in hand (the pane's rasteriser is a stand-in for a weak GPU, not for a phone's CPU), and the jitter itself cannot be watched in the pane (its `requestAnimationFrame` runs at one frame every two seconds between tool calls) — the 120 Hz stream is proven by the clock's tests.
